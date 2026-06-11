@@ -1,0 +1,4 @@
+Third-party license texts are governed by the modules listed in go.mod and
+go.sum. This MVP build removed the stale generated license snapshot from the
+upstream GUI/hosted-provider product. Regenerate this file from the current Go
+module graph before publishing a formal binary release.
