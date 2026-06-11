@@ -93,7 +93,7 @@ func TestRetryPolicy_TransientRetries(t *testing.T) {
 			{
 				resp: &translation.ResponseData{
 					Translations: []translation.TranslatedSegment{
-						{ID: 1, Text: "ok"},
+						{ID: 1, SourceText: "hello", Text: "ok"},
 					},
 				},
 			},

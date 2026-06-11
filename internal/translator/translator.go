@@ -37,13 +37,17 @@ Translate the provided %s subtitle segments into %s.
 
 1. Input Structure:
 - The input is provided in JSON format with 'context_before', 'target', and 'context_after'.
-- 'target': Contains the segments you must translate. 
+- 'target': Contains the segments you must translate.
+- Each segment has:
+  - 'id': The segment ID.
+  - 'source_text': The one-line source text for that segment.
 - 'context_before' and 'context_after': Provided for context only. Do NOT translate them or include them in the output.
 
 2. Output Structure:
 - The output MUST be a JSON object with a 'translations' field, containing an array of objects.
 - Each object in the array must have:
-  - 'id': The ID from the input segment.
+  - 'id': The ID from the same input target segment.
+  - 'source_text': The exact source_text from the same input target segment.
   - 'text': The translated subtitle segment.
 - Return exactly one output object for each target segment.
 - Do not add any other fields.
@@ -51,7 +55,11 @@ Translate the provided %s subtitle segments into %s.
 
 3. Rules:
 - Maintain the original tone and context.
-- Translate each target segment into the output item with the same id.
+- For each object, first copy the exact target source text into 'source_text', then translate only that same 'source_text' value into 'text'.
+- The output 'source_text' field must exactly match the input target segment's 'source_text', with no added or removed text.
+- The 'text' field must translate the full meaning of only the 'source_text' field in the same object.
+- Do not omit meaningful source_text content.
+- Do not move words, clauses, speaker turns, sentence endings, or meaning between IDs.
 - Use context only to resolve meaning and pronouns.
 - Adjacent target segments may form one sentence; keep them readable while preserving one output object per target id.
 - Do not translate, summarize, continue, or copy any content that appears only in 'context_before' or 'context_after'.
@@ -447,8 +455,8 @@ func toSegmentData(segments []srt.Segment) []translation.SegmentData {
 	data := make([]translation.SegmentData, len(segments))
 	for i, s := range segments {
 		data[i] = translation.SegmentData{
-			ID:    s.ID,
-			Lines: s.Lines,
+			ID:         s.ID,
+			SourceText: translation.SourceTextFromLines(s.Lines),
 		}
 	}
 	return data
@@ -485,6 +493,9 @@ func (t *Translator) mergeResults(original []srt.Segment, resp *translation.Resp
 		tr, ok := transMap[orig.ID]
 		if !ok {
 			return nil, fmt.Errorf("missing translation for segment ID %d", orig.ID)
+		}
+		if tr.SourceText != translation.SourceTextFromLines(orig.Lines) {
+			return nil, fmt.Errorf("source echo mismatch for segment ID %d", orig.ID)
 		}
 
 		// Validation: Ensure translation is not empty if original was not empty

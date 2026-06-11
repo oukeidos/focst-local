@@ -18,10 +18,11 @@ var (
 )
 
 type repairOptions struct {
-	forceRepair bool
-	baseURL     string
-	debug       bool
-	llama       llamaServerOptions
+	forceRepair        bool
+	baseURL            string
+	translationTimeout time.Duration
+	debug              bool
+	llama              llamaServerOptions
 }
 
 func newRepairCmd() *cobra.Command {
@@ -42,6 +43,7 @@ func newRepairCmd() *cobra.Command {
 	cmd.SetUsageTemplate(subcommandUsageTemplate)
 	cmd.Flags().BoolVar(&opts.forceRepair, "force-repair", false, "Ignore existing output and re-translate all chunks")
 	cmd.Flags().StringVar(&opts.baseURL, "llama-base-url", localllm.DefaultBaseURL, "OpenAI-compatible llama.cpp base URL")
+	cmd.Flags().DurationVar(&opts.translationTimeout, "translation-timeout", localllm.DefaultTranslationTimeout, "Timeout per translation request; 0 disables the timeout")
 	cmd.Flags().BoolVar(&opts.debug, "debug", false, "Enable debug logging")
 	addLlamaServerFlags(cmd, &opts.llama)
 	return cmd
@@ -62,10 +64,11 @@ func runRepair(cmd *cobra.Command, args []string, opts *repairOptions) error {
 	}
 
 	cfg := pipeline.Config{
-		LogPath:     logPath,
-		BaseURL:     launchCfg.BaseURL,
-		LlamaServer: launchCfg,
-		ForceRepair: opts.forceRepair,
+		LogPath:            logPath,
+		BaseURL:            launchCfg.BaseURL,
+		LlamaServer:        launchCfg,
+		TranslationTimeout: opts.translationTimeout,
+		ForceRepair:        opts.forceRepair,
 		OnProgress: func(p translator.TranslationProgress) {
 			switch p.State {
 			case translator.StateCompleted:

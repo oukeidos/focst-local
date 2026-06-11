@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/oukeidos/focst-local/internal/chunker"
@@ -123,6 +124,7 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 
 	client := localllm.NewClient(cfg.BaseURL, cfg.Model)
 	client.SetMaxTokens(cfg.MaxTokens)
+	client.SetTranslationTimeout(cfg.TranslationTimeout)
 
 	tr, err := translator.NewTranslator(client, cfg.ChunkSize, cfg.ContextSize, cfg.Concurrency, srcLang, tgtLang)
 	if err != nil {
@@ -143,6 +145,7 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 		"model", cfg.Model,
 		"base_url", cfg.BaseURL,
 		"max_tokens", cfg.MaxTokens,
+		"translation_timeout", timeoutLogValue(cfg.TranslationTimeout),
 		"sentence_aware_chunks", cfg.SentenceAwareChunks,
 		"chunk_boundary_planner", cfg.ChunkBoundaryPlanner,
 		"min_chunk_size", cfg.MinChunkSize,
@@ -283,6 +286,13 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 	}
 
 	return result, nil
+}
+
+func timeoutLogValue(timeout time.Duration) string {
+	if timeout == 0 {
+		return "unlimited"
+	}
+	return timeout.String()
 }
 
 func writeIDMap(logPath string, mapping []srt.IDMap) error {

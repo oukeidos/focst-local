@@ -24,6 +24,8 @@ const (
 	DefaultTopK             = 64
 	DefaultMaxTokens        = 8192
 	DefaultPlannerMaxTokens = 192
+	// DefaultTranslationTimeout disables per-request timeout for slow local models.
+	DefaultTranslationTimeout time.Duration = 0
 )
 
 type Client struct {
@@ -31,6 +33,7 @@ type Client struct {
 	model             string
 	systemInstruction string
 	maxTokens         int
+	translationClient *http.Client
 }
 
 func NewClient(baseURL, model string) *Client {
@@ -41,15 +44,22 @@ func NewClient(baseURL, model string) *Client {
 		model = DefaultModel
 	}
 	return &Client{
-		baseURL:   strings.TrimRight(baseURL, "/"),
-		model:     model,
-		maxTokens: DefaultMaxTokens,
+		baseURL:           strings.TrimRight(baseURL, "/"),
+		model:             model,
+		maxTokens:         DefaultMaxTokens,
+		translationClient: httpclient.NewClient(DefaultTranslationTimeout),
 	}
 }
 
 func (c *Client) SetMaxTokens(maxTokens int) {
 	if maxTokens > 0 {
 		c.maxTokens = maxTokens
+	}
+}
+
+func (c *Client) SetTranslationTimeout(timeout time.Duration) {
+	if timeout >= 0 {
+		c.translationClient = httpclient.NewClient(timeout)
 	}
 }
 
@@ -70,7 +80,12 @@ func (c *Client) Check(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create local LLM health request: %w", err)
 	}
-	respBody, resp, err := httpclient.DoAndRead(httpclient.GetDefaultClient(), httpReq)
+	client := c.translationClient
+	if client == nil {
+		client = httpclient.NewClient(DefaultTranslationTimeout)
+		c.translationClient = client
+	}
+	respBody, resp, err := httpclient.DoAndRead(client, httpReq)
 	if err != nil {
 		return apperrors.Transient(fmt.Errorf("local LLM health check failed: %w", err))
 	}
@@ -234,11 +249,15 @@ func exactIDSchema(target []translation.SegmentData) map[string]any {
 		prefixItems = append(prefixItems, map[string]any{
 			"type":                 "object",
 			"additionalProperties": false,
-			"required":             []string{"id", "text"},
+			"required":             []string{"id", "source_text", "text"},
 			"properties": map[string]any{
 				"id": map[string]any{
 					"type":  "integer",
 					"const": segment.ID,
+				},
+				"source_text": map[string]any{
+					"type":  "string",
+					"const": segment.SourceText,
 				},
 				"text": map[string]any{
 					"type":      "string",

@@ -22,6 +22,7 @@ type translateOptions struct {
 	modelName             string
 	baseURL               string
 	maxTokens             int
+	translationTimeout    time.Duration
 	chunkSize             int
 	contextSize           int
 	concurrency           int
@@ -66,6 +67,7 @@ func addTranslateFlags(cmd *cobra.Command, opts *translateOptions) {
 	cmd.Flags().StringVar(&opts.baseURL, "llama-base-url", localllm.DefaultBaseURL, "OpenAI-compatible llama.cpp base URL")
 	cmd.Flags().StringVar(&opts.modelName, "model", localllm.DefaultModel, "Local model name")
 	cmd.Flags().IntVar(&opts.maxTokens, "max-tokens", localllm.DefaultMaxTokens, "Maximum generated tokens per request")
+	cmd.Flags().DurationVar(&opts.translationTimeout, "translation-timeout", localllm.DefaultTranslationTimeout, "Timeout per translation request; 0 disables the timeout")
 	cmd.Flags().IntVar(&opts.chunkSize, "chunk-size", 100, "Number of segments per chunk")
 	cmd.Flags().IntVar(&opts.contextSize, "context-size", 5, "Number of context segments before/after")
 	cmd.Flags().IntVar(&opts.concurrency, "concurrency", 1, "Number of concurrent local LLM requests (1-20)")
@@ -140,6 +142,7 @@ func runTranslate(cmd *cobra.Command, args []string, opts *translateOptions) err
 		Model:                launchCfg.ModelAlias,
 		LlamaServer:          launchCfg,
 		MaxTokens:            opts.maxTokens,
+		TranslationTimeout:   opts.translationTimeout,
 		ChunkSize:            opts.chunkSize,
 		ContextSize:          opts.contextSize,
 		Concurrency:          opts.concurrency,

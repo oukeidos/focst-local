@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/oukeidos/focst-local/internal/chunker"
 	"github.com/oukeidos/focst-local/internal/llamaserver"
@@ -20,6 +21,9 @@ type Config struct {
 	BaseURL   string
 	Model     string
 	MaxTokens int
+	// TranslationTimeout is the per-request timeout for translation calls.
+	// A zero value disables the HTTP client timeout for slow local models.
+	TranslationTimeout time.Duration
 
 	// llama.cpp server management
 	LlamaServer  llamaserver.LaunchConfig
@@ -148,6 +152,9 @@ func (c Config) Validate() error {
 	}
 	if c.ContextSize < 0 {
 		return fmt.Errorf("contextSize must be 0 or greater, got %d", c.ContextSize)
+	}
+	if c.TranslationTimeout < 0 {
+		return fmt.Errorf("translationTimeout must be 0 or greater, got %s", c.TranslationTimeout)
 	}
 	if c.BaseURL == "" {
 		return fmt.Errorf("llama base URL is required")

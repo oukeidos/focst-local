@@ -24,8 +24,9 @@ func (m *slowMockClient) Translate(ctx context.Context, req translation.RequestD
 	translations := make([]translation.TranslatedSegment, len(req.Target))
 	for i, s := range req.Target {
 		translations[i] = translation.TranslatedSegment{
-			ID:   s.ID,
-			Text: "translated",
+			ID:         s.ID,
+			SourceText: s.SourceText,
+			Text:       "translated",
 		}
 	}
 

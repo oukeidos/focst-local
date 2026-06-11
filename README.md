@@ -29,6 +29,10 @@ go install -buildvcs=false ./cmd/focst-local
 The default workflow is still externally managed llama.cpp: start
 `llama-server` yourself, then point `focst-local` at it.
 
+The Gemma 4 examples below include `--reasoning off` because that is the tested
+local translation setup. `focst-local` does not add this flag automatically; pass
+it explicitly when your model/server needs it.
+
 ```bash
 llama-server \
   --model /path/to/gemma-4-26b-a4b-qat-q4_0.gguf \
@@ -121,8 +125,14 @@ contract is intentionally simpler than upstream FoCST:
 
 - The model receives chunked target segments plus surrounding context.
 - Context is used only to resolve meaning.
-- The model returns JSON shaped as `{"translations":[{"id":1,"text":"..."}]}`.
+- Each model-facing segment carries a single `source_text` field. Physical
+  subtitle lines are joined with spaces and whitespace is normalized before
+  the request is sent.
+- The model returns JSON shaped as
+  `{"translations":[{"id":1,"source_text":"...","text":"..."}]}`.
 - Target IDs must match exactly: no missing, duplicate, or extra IDs.
+- `source_text` must exactly echo the same normalized target segment text that
+  appeared in the request.
 - Each segment is saved by replacing the source segment text with the returned
   translated text.
 
@@ -145,6 +155,8 @@ later, it should be a deterministic postprocess, not an LLM formatting burden.
 - `--llama-load-timeout`: managed server readiness timeout.
 - `--llama-log-file`: managed server stdout/stderr log path.
 - `--max-tokens`: maximum generated tokens per request. Default: `8192`.
+- `--translation-timeout`: timeout per translation request. Default: `0`
+  means unlimited; use values such as `30m` only when you want a hard cap.
 - `--chunk-size`: target segments per request. Default: `100`.
 - `--context-size`: surrounding context segments before and after each chunk.
 - `--concurrency`: concurrent chunk requests. Keep this at `1` for a single

@@ -93,6 +93,25 @@ func TestConfigNormalize_ConcurrencyClamp(t *testing.T) {
 	}
 }
 
+func TestConfigValidate_RejectsNegativeTranslationTimeout(t *testing.T) {
+	cfg := Config{
+		InputPath:            "in.srt",
+		OutputPath:           "out.srt",
+		BaseURL:              "http://127.0.0.1:8080/v1",
+		Model:                "test-model",
+		ChunkSize:            10,
+		ContextSize:          0,
+		Concurrency:          1,
+		SourceLang:           "ja",
+		TargetLang:           "ko",
+		TranslationTimeout:   -1,
+		ChunkBoundaryPlanner: ChunkBoundaryPlannerOff,
+	}
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "translationTimeout must be 0 or greater") {
+		t.Fatalf("expected negative translation timeout validation error, got %v", err)
+	}
+}
+
 func TestConfigNormalize_SentenceAwareDefaultRangeUsesClampedChunkSize(t *testing.T) {
 	cfg := Config{
 		ChunkSize:           MaxChunkSize + 50,

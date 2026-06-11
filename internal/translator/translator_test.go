@@ -18,8 +18,8 @@ func TestTranslator_TranslateSRT(t *testing.T) {
 	mockClient := &translation.MockClient{
 		Response: &translation.ResponseData{
 			Translations: []translation.TranslatedSegment{
-				{ID: 1, Text: "안녕"},
-				{ID: 2, Text: "세상아 반가워"},
+				{ID: 1, SourceText: "こんにちは", Text: "안녕"},
+				{ID: 2, SourceText: "世界よ またな", Text: "세상아 반가워"},
 			},
 		},
 	}
@@ -57,7 +57,7 @@ func TestTranslator_EmptyTranslation(t *testing.T) {
 	mockClient := &translation.MockClient{
 		Response: &translation.ResponseData{
 			Translations: []translation.TranslatedSegment{
-				{ID: 1, Text: ""},
+				{ID: 1, SourceText: "こんにちは", Text: ""},
 			},
 		},
 	}
@@ -88,6 +88,16 @@ func TestTranslator_MergeResultsStrictValidation(t *testing.T) {
 		resp    *translation.ResponseData
 		wantErr string
 	}{
+		{
+			name: "Source echo mismatch",
+			resp: &translation.ResponseData{
+				Translations: []translation.TranslatedSegment{
+					{ID: 1, SourceText: "wrong", Text: "T1"},
+					{ID: 2, SourceText: "", Text: "T2"},
+				},
+			},
+			wantErr: "source echo mismatch",
+		},
 		{
 			name: "Duplicate ID",
 			resp: &translation.ResponseData{
@@ -159,8 +169,11 @@ func TestGetSystemPrompt_IncludesSlashRule(t *testing.T) {
 func TestGetSystemPrompt_UsesSimpleTextContract(t *testing.T) {
 	prompt := GetSystemPrompt("English", "Korean")
 	required := []string{
+		"'source_text': The exact source_text from the same input target segment.",
 		"'text': The translated subtitle segment.",
 		"Do not add any other fields.",
+		"For each object, first copy the exact target source text into 'source_text'",
+		"Do not omit meaningful source_text content.",
 		"Use context only to resolve meaning and pronouns.",
 		"Adjacent target segments may form one sentence; keep them readable while preserving one output object per target id.",
 		"Do not translate, summarize, continue, or copy any content that appears only in 'context_before' or 'context_after'.",
@@ -220,8 +233,9 @@ func (p *perRequestMockClient) Translate(ctx context.Context, request translatio
 	}
 	for i, segment := range request.Target {
 		resp.Translations[i] = translation.TranslatedSegment{
-			ID:   segment.ID,
-			Text: "T" + strconv.Itoa(segment.ID),
+			ID:         segment.ID,
+			SourceText: segment.SourceText,
+			Text:       "T" + strconv.Itoa(segment.ID),
 		}
 	}
 	return resp, nil

@@ -1,11 +1,14 @@
 package translation
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 // SegmentData is one subtitle segment in the JSON request.
 type SegmentData struct {
-	ID    int      `json:"id"`
-	Lines []string `json:"lines"`
+	ID         int    `json:"id"`
+	SourceText string `json:"source_text"`
 }
 
 // RequestData is the full JSON structure sent to the local model.
@@ -17,8 +20,9 @@ type RequestData struct {
 
 // TranslatedSegment is one translated segment in the JSON response.
 type TranslatedSegment struct {
-	ID   int    `json:"id"`
-	Text string `json:"text"`
+	ID         int    `json:"id"`
+	SourceText string `json:"source_text"`
+	Text       string `json:"text"`
 }
 
 // ResponseData is the full structured response expected from the model.
@@ -33,6 +37,12 @@ type UsageMetadata struct {
 	CandidatesTokenCount int
 	TotalTokenCount      int
 	WebSearchCount       int
+}
+
+// SourceTextFromLines normalizes one subtitle segment into the single text
+// block sent to local models.
+func SourceTextFromLines(lines []string) string {
+	return strings.Join(strings.Fields(strings.Join(lines, " ")), " ")
 }
 
 // Translator is implemented by translation backends.

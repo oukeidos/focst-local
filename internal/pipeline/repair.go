@@ -98,6 +98,7 @@ func RunRepair(ctx context.Context, cfg Config) (RepairResult, error) {
 	baseURL = server.BaseURL
 	client := localllm.NewClient(baseURL, runtimeLog.Model)
 	client.SetMaxTokens(runtimeLog.MaxTokens)
+	client.SetTranslationTimeout(cfg.TranslationTimeout)
 
 	srcLang, _ := language.GetLanguage(runtimeLog.SourceLang)
 	tgtLang, _ := language.GetLanguage(runtimeLog.TargetLang)

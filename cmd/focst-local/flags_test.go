@@ -73,3 +73,23 @@ func TestSentenceAwareChunkFlags_Parse(t *testing.T) {
 		}
 	}
 }
+
+func TestTranslationTimeoutFlag_Parse(t *testing.T) {
+	cases := [][]string{
+		{"--translation-timeout", "0"},
+		{"--translation-timeout", "30m"},
+		{"translate", "--translation-timeout", "30m"},
+		{"repair", "--translation-timeout", "30m"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			out, err := executeCommand(t, args...)
+			if err == nil {
+				t.Fatalf("expected command error from missing required args, got nil")
+			}
+			if strings.Contains(out, "unknown flag: --translation-timeout") {
+				t.Fatalf("expected --translation-timeout to parse, got output: %s", out)
+			}
+		})
+	}
+}

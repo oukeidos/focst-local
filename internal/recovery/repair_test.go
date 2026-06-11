@@ -21,8 +21,9 @@ func (m *mockClient) Translate(ctx context.Context, req translation.RequestData)
 	}
 	for i, seg := range req.Target {
 		resp.Translations[i] = translation.TranslatedSegment{
-			ID:   seg.ID,
-			Text: "번역됨: " + strings.Join(seg.Lines, " "),
+			ID:         seg.ID,
+			SourceText: seg.SourceText,
+			Text:       "번역됨: " + seg.SourceText,
 		}
 	}
 	return resp, nil
