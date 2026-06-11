@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/oukeidos/focst-local/internal/chunker"
+	"github.com/oukeidos/focst-local/internal/httpclient"
 	"github.com/oukeidos/focst-local/internal/srt"
 	"github.com/oukeidos/focst-local/internal/translation"
 )
@@ -34,6 +35,54 @@ func TestClient_SetTranslationTimeout(t *testing.T) {
 	client.SetTranslationTimeout(0)
 	if client.translationClient.Timeout != 0 {
 		t.Fatalf("translation timeout = %s, want unlimited", client.translationClient.Timeout)
+	}
+}
+
+func TestClient_TranslateUsesTranslationClientTimeout(t *testing.T) {
+	restore := httpclient.SetDefaultClientForTesting(httpclient.NewClient(time.Nanosecond))
+	defer restore()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		time.Sleep(20 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices": [{"message": {"role": "assistant", "content": "{\"translations\":[{\"id\":1,\"source_text\":\"alpha\",\"text\":\"알파\"}]}"}}],
+			"usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL+"/v1", "test-model")
+	client.SetTranslationTimeout(time.Second)
+	_, err := client.Translate(context.Background(), translation.RequestData{
+		Target: []translation.SegmentData{{ID: 1, SourceText: "alpha"}},
+	})
+	if err != nil {
+		t.Fatalf("Translate should use translation timeout, got error: %v", err)
+	}
+}
+
+func TestClient_CheckUsesDefaultClientTimeout(t *testing.T) {
+	restore := httpclient.SetDefaultClientForTesting(httpclient.NewClient(time.Nanosecond))
+	defer restore()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/models" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		time.Sleep(20 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL+"/v1", "test-model")
+	client.SetTranslationTimeout(time.Second)
+	if err := client.Check(context.Background()); err == nil {
+		t.Fatalf("Check should use default client timeout")
 	}
 }
 

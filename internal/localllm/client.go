@@ -80,12 +80,7 @@ func (c *Client) Check(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create local LLM health request: %w", err)
 	}
-	client := c.translationClient
-	if client == nil {
-		client = httpclient.NewClient(DefaultTranslationTimeout)
-		c.translationClient = client
-	}
-	respBody, resp, err := httpclient.DoAndRead(client, httpReq)
+	respBody, resp, err := httpclient.DoAndRead(httpclient.GetDefaultClient(), httpReq)
 	if err != nil {
 		return apperrors.Transient(fmt.Errorf("local LLM health check failed: %w", err))
 	}
@@ -127,7 +122,12 @@ func (c *Client) Translate(ctx context.Context, request translation.RequestData)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
-	respBody, resp, err := httpclient.DoAndRead(httpclient.GetDefaultClient(), httpReq)
+	client := c.translationClient
+	if client == nil {
+		client = httpclient.NewClient(DefaultTranslationTimeout)
+		c.translationClient = client
+	}
+	respBody, resp, err := httpclient.DoAndRead(client, httpReq)
 	if err != nil {
 		return nil, apperrors.Transient(fmt.Errorf("local LLM request failed: %w", err))
 	}
