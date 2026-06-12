@@ -18,15 +18,15 @@ func TestTranslator_TranslateSRT(t *testing.T) {
 	mockClient := &translation.MockClient{
 		Response: &translation.ResponseData{
 			Translations: []translation.TranslatedSegment{
-				{ID: 1, SourceText: "こんにちは", Text: "안녕"},
-				{ID: 2, SourceText: "世界よ またな", Text: "세상아 반가워"},
+				{ID: 1, SourceText: "テスト甲", Text: "번역-갑"},
+				{ID: 2, SourceText: "テスト乙 分割行", Text: "번역-을"},
 			},
 		},
 	}
 
 	segments := []srt.Segment{
-		{ID: 1, StartTime: "00:00", EndTime: "00:01", Lines: []string{"こんにちは"}},
-		{ID: 2, StartTime: "00:01", EndTime: "00:02", Lines: []string{"世界よ", "またな"}},
+		{ID: 1, StartTime: "00:00", EndTime: "00:01", Lines: []string{"テスト甲"}},
+		{ID: 2, StartTime: "00:01", EndTime: "00:02", Lines: []string{"テスト乙", "分割行"}},
 	}
 
 	src, _ := language.GetLanguage("ja")
@@ -44,8 +44,8 @@ func TestTranslator_TranslateSRT(t *testing.T) {
 	}
 
 	expected := []srt.Segment{
-		{ID: 1, StartTime: "00:00", EndTime: "00:01", Lines: []string{"안녕"}},
-		{ID: 2, StartTime: "00:01", EndTime: "00:02", Lines: []string{"세상아 반가워"}},
+		{ID: 1, StartTime: "00:00", EndTime: "00:01", Lines: []string{"번역-갑"}},
+		{ID: 2, StartTime: "00:01", EndTime: "00:02", Lines: []string{"번역-을"}},
 	}
 
 	if !reflect.DeepEqual(results, expected) {
@@ -57,13 +57,13 @@ func TestTranslator_EmptyTranslation(t *testing.T) {
 	mockClient := &translation.MockClient{
 		Response: &translation.ResponseData{
 			Translations: []translation.TranslatedSegment{
-				{ID: 1, SourceText: "こんにちは", Text: ""},
+				{ID: 1, SourceText: "テスト空", Text: ""},
 			},
 		},
 	}
 
 	segments := []srt.Segment{
-		{ID: 1, StartTime: "00:00", EndTime: "00:01", Lines: []string{"こんにちは"}},
+		{ID: 1, StartTime: "00:00", EndTime: "00:01", Lines: []string{"テスト空"}},
 	}
 
 	tr, err := NewTranslator(mockClient, 1, 0, 1, language.Language{Name: "Japanese", Code: "ja"}, language.Language{Name: "Korean", Code: "ko"})

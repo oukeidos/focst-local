@@ -3,16 +3,27 @@
 `focst-local` is a CLI subtitle translator for local LLM runs through
 llama.cpp's OpenAI-compatible server.
 
-The MVP translation path is local-first:
+It has only been tested with Gemma 4 26B A4B and Gemma 4 31B. Other local
+models may work, but they are not validated and are not guaranteed to preserve
+the subtitle translation contract.
 
-- Backend: `llama-server`
-- Default endpoint: `http://127.0.0.1:8080/v1`
-- Default model: `gemma-4-26b-a4b-qat-q4_0`
-- Translation output contract: one translated `text` value for each input
-  segment ID
-- Optional `names` workflow: OpenAI-based character name mapping
+The main failure mode for local subtitle translation is segment drift: the model
+may translate the right general scene, but place content from one subtitle
+segment into another segment's output. `focst-local` reduces this by requiring
+each translated item to echo the original source text together with the
+translation for the same segment ID, making it much harder for nearby subtitle
+content to slide into the wrong output slot.
 
 ## Build
+
+Clone the repository first:
+
+```bash
+git clone https://github.com/oukeidos/focst-local.git
+cd focst-local
+```
+
+Build the CLI:
 
 ```bash
 go build -o focst-local ./cmd/focst-local
@@ -29,9 +40,9 @@ go install -buildvcs=false ./cmd/focst-local
 The default workflow is still externally managed llama.cpp: start
 `llama-server` yourself, then point `focst-local` at it.
 
-The Gemma 4 examples below include `--reasoning off` because that is the tested
-local translation setup. `focst-local` does not add this flag automatically; pass
-it explicitly when your model/server needs it.
+By default, `focst-local` expects an OpenAI-compatible `llama-server` endpoint at
+`http://127.0.0.1:8080/v1` and uses the model alias
+`gemma-4-26b-a4b-qat-q4_0`.
 
 ```bash
 llama-server \
@@ -42,20 +53,24 @@ llama-server \
   --ctx-size 16384
 ```
 
+Run Gemma 4 with reasoning disabled. The tested token and context settings are
+intended for direct translation output, not for additional reasoning tokens, and
+reasoning-enabled runs may fail or produce unusable responses.
+
 ```bash
 ./focst-local translate input.srt output.srt \
   --llama-base-url http://127.0.0.1:8080/v1 \
   --model gemma-4-26b-a4b-qat-q4_0 \
   --source en \
-  --target ko \
-  --log-file run.jsonl \
-  --yes
+  --target ko
 ```
+
+Use `--source` and `--target` for language codes such as `ja`, `en`, and `ko`.
 
 The root command also translates:
 
 ```bash
-./focst-local input.srt output.srt --source en --target ko --yes
+./focst-local input.srt output.srt --source en --target ko
 ```
 
 `focst-local` can also start llama.cpp when both paths are provided
@@ -73,71 +88,24 @@ symlinks, or local experiment directories.
   --llama-arg --reasoning \
   --llama-arg off \
   --source en \
-  --target ko \
-  --yes
+  --target ko
 ```
 
-In `start` mode, the managed server is stopped after the command unless
-`--keep-llama-server` is set.
+## Translation Behavior
 
-## User Config
+`focst-local` keeps the practical parts of
+[FoCST](https://github.com/oukeidos/focst)'s subtitle pipeline while using a
+local model for translation. By default it translates multiple subtitle segments
+at a time as a chunk, includes nearby preceding and following subtitles as
+context for that chunk, applies preprocessing before model requests, and applies
+deterministic postprocessing before writing the output file.
 
-User config is a convenience layer for local paths and llama.cpp defaults. It
-is not a built-in model profile system.
-
-```bash
-./focst-local config path
-./focst-local config set llama-server-bin /path/to/llama-server
-./focst-local config set model-path /path/to/gemma-4-26b-a4b-qat-q4_0.gguf
-./focst-local config set model gemma-4-26b-a4b-qat-q4_0
-./focst-local config set ctx-size 16384
-./focst-local config set parallel 1
-./focst-local config add-arg --reasoning
-./focst-local config add-arg off
-./focst-local config show
-```
-
-After that, managed start can be shorter:
-
-```bash
-./focst-local translate input.srt output.srt \
-  --llama-server-mode start \
-  --source en \
-  --target ko \
-  --yes
-```
-
-Config resolution uses this order:
-
-```text
-CLI flag > environment variable > user config > built-in default
-```
-
-Supported environment variables are `FOCST_LLAMA_SERVER_BIN`,
-`FOCST_LLAMA_MODEL_PATH`, `FOCST_LLAMA_CTX_SIZE`, and
-`FOCST_LLAMA_PARALLEL`.
-
-## Translation Contract
-
-The product keeps FoCST's chunking, context windows, preprocessing,
-postprocessing, recovery logs, and name mapping support. The local translation
-contract is intentionally simpler than upstream FoCST:
-
-- The model receives chunked target segments plus surrounding context.
-- Context is used only to resolve meaning.
-- Each model-facing segment carries a single `source_text` field. Physical
-  subtitle lines are joined with spaces and whitespace is normalized before
-  the request is sent.
-- The model returns JSON shaped as
-  `{"translations":[{"id":1,"source_text":"...","text":"..."}]}`.
-- Target IDs must match exactly: no missing, duplicate, or extra IDs.
-- `source_text` must exactly echo the same normalized target segment text that
-  appeared in the request.
-- Each segment is saved by replacing the source segment text with the returned
-  translated text.
-
-Line wrapping is not a model contract in the MVP. If stricter wrapping is needed
-later, it should be a deterministic postprocess, not an LLM formatting burden.
+Preprocessing and postprocessing include subtitle cleanup and normalization
+steps that are useful for ordinary runs. They can be adjusted or disabled with
+flags when you need closer control over input handling or output formatting.
+Run `./focst-local --help` or `./focst-local translate --help` for the current
+translation, preprocessing, postprocessing, chunking, logging, and recovery
+options.
 
 ## Local Runtime Flags
 
@@ -178,27 +146,20 @@ chunk size, context size, or output budget is reduced.
 
 ## Names
 
-The `names` command remains OpenAI-based and separate from translation:
+`focst-local` includes an optional OpenAI-based names workflow that generates a
+character and proper-name mapping file, then applies that mapping during
+translation with `--names`. API key setup and API-key-related options exist for
+this names workflow only; subtitle translation itself is still performed locally
+through llama.cpp.
 
-```bash
-./focst-local env setup --service openai
-./focst-local names --title "Example Title" --source English --target Korean names.json
-./focst-local translate input.srt output.srt --names names.json --yes
-```
-
-Use `--allow-env` or `--env-only` with `names` if you want to read
-`OPENAI_API_KEY` from the environment. Translation itself does not use an API
-key.
+Run `./focst-local names --help` for the current options.
 
 ## Recovery
 
-Failed or partially completed translation runs write recovery logs next to the
-output file. Repair uses the local llama.cpp backend:
+`focst-local` includes a repair workflow for failed or partially completed
+translation runs. Translation writes recovery logs next to the output file, and
+`repair` uses the local llama.cpp backend to retry from that recovery data:
 
 ```bash
-./focst-local repair output_recovery.json --llama-base-url http://127.0.0.1:8080/v1
+./focst-local repair output_recovery.json
 ```
-
-## Repository
-
-https://github.com/oukeidos/focst-local

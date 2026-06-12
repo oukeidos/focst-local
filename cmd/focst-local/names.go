@@ -46,11 +46,11 @@ func newNamesCmd() *cobra.Command {
 	}
 
 	cmd.SetUsageTemplate(subcommandUsageTemplate)
-	cmd.Flags().StringVar(&opts.workType, "type", "movie", "Type of work (movie, show, etc.)")
+	cmd.Flags().StringVar(&opts.workType, "type", "movie", "Free-form work type passed to name search (e.g. movie, show, TV show)")
 	cmd.Flags().StringVar(&opts.title, "title", "", "Title of the work")
 	cmd.Flags().StringVar(&opts.year, "year", "", "Release year")
-	cmd.Flags().StringVar(&opts.sourceName, "source", "Japanese", "Source language name (e.g. Japanese)")
-	cmd.Flags().StringVar(&opts.targetName, "target", "Korean", "Target language name (e.g. Korean)")
+	cmd.Flags().StringVar(&opts.sourceName, "source", "Japanese", "Source language code or name (e.g. en or English)")
+	cmd.Flags().StringVar(&opts.targetName, "target", "Korean", "Target language code or name (e.g. ko or Korean)")
 	cmd.Flags().IntVar(&opts.maxTokens, "max-tokens", 16384, "Max output tokens including reasoning")
 	cmd.Flags().BoolVar(&opts.allowEnv, "allow-env", false, "Allow reading API key from environment variables")
 	cmd.Flags().BoolVar(&opts.envOnly, "env-only", false, "Use only environment variables for API keys")
