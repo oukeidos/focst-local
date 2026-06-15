@@ -33,6 +33,12 @@ type translateOptions struct {
 	yes                   bool
 	logFilePath           string
 	namesPath             string
+	autoGlossary          bool
+	saveGlossaryPath      string
+	glossaryFilePath      string
+	glossaryArtifactsDir  string
+	glossaryRuns          int
+	glossaryWindowChunks  int
 	noPreprocess          bool
 	noPostprocess         bool
 	noLangPreprocess      bool
@@ -78,6 +84,12 @@ func addTranslateFlags(cmd *cobra.Command, opts *translateOptions) {
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "Overwrite output file without asking")
 	cmd.Flags().StringVar(&opts.logFilePath, "log-file", "", "Path to save machine-readable JSONL logs")
 	cmd.Flags().StringVar(&opts.namesPath, "names", "", "Path to character name mapping JSON file")
+	cmd.Flags().BoolVar(&opts.autoGlossary, "auto-glossary", false, "Generate and use a local glossary for this translation")
+	cmd.Flags().StringVar(&opts.saveGlossaryPath, "save-glossary", "", "Path to save the generated local glossary JSON")
+	cmd.Flags().StringVar(&opts.glossaryFilePath, "glossary-file", "", "Path to an existing local glossary JSON file to use")
+	cmd.Flags().StringVar(&opts.glossaryArtifactsDir, "glossary-artifacts", "", "Directory for local glossary debug artifacts")
+	cmd.Flags().IntVar(&opts.glossaryRuns, "glossary-runs", 3, "Number of local glossary extraction runs per glossary window")
+	cmd.Flags().IntVar(&opts.glossaryWindowChunks, "glossary-window-chunks", 3, "Number of translation chunks per glossary extraction window")
 	cmd.Flags().BoolVar(&opts.noPreprocess, "no-preprocess", false, "Disable all preprocessing (bracket removal, symbol filtering)")
 	cmd.Flags().BoolVar(&opts.noLangPreprocess, "no-lang-preprocess", false, "Disable language-specific preprocessing only")
 	cmd.Flags().BoolVar(&opts.noPostprocess, "no-postprocess", false, "Disable all post-processing (punctuation, timing correction)")
@@ -159,6 +171,12 @@ func runTranslate(cmd *cobra.Command, args []string, opts *translateOptions) err
 		TargetLang:           opts.targetLangCode,
 		NamesMapping:         nameMapping,
 		NamesPath:            opts.namesPath,
+		AutoGlossary:         opts.autoGlossary,
+		SaveGlossaryPath:     opts.saveGlossaryPath,
+		GlossaryPath:         opts.glossaryFilePath,
+		GlossaryArtifactsDir: opts.glossaryArtifactsDir,
+		GlossaryRuns:         opts.glossaryRuns,
+		GlossaryWindowChunks: opts.glossaryWindowChunks,
 		OnProgress: func(p translator.TranslationProgress) {
 			switch p.State {
 			case translator.StateCompleted:

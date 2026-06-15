@@ -112,6 +112,28 @@ func TestConfigValidate_RejectsNegativeTranslationTimeout(t *testing.T) {
 	}
 }
 
+func TestConfigNormalize_GlossaryDefaultsUseProductShapedRuns(t *testing.T) {
+	cfg := Config{}
+	got, _ := cfg.Normalize()
+	if got.GlossaryRuns != 3 {
+		t.Fatalf("GlossaryRuns = %d, want 3", got.GlossaryRuns)
+	}
+	if got.GlossaryWindowChunks != 3 {
+		t.Fatalf("GlossaryWindowChunks = %d, want 3", got.GlossaryWindowChunks)
+	}
+}
+
+func TestConfigNormalize_PreservesExplicitGlossaryValidationRuns(t *testing.T) {
+	cfg := Config{GlossaryRuns: 10, GlossaryWindowChunks: 4}
+	got, _ := cfg.Normalize()
+	if got.GlossaryRuns != 10 {
+		t.Fatalf("GlossaryRuns = %d, want 10", got.GlossaryRuns)
+	}
+	if got.GlossaryWindowChunks != 4 {
+		t.Fatalf("GlossaryWindowChunks = %d, want 4", got.GlossaryWindowChunks)
+	}
+}
+
 func TestConfigNormalize_SentenceAwareDefaultRangeUsesClampedChunkSize(t *testing.T) {
 	cfg := Config{
 		ChunkSize:           MaxChunkSize + 50,

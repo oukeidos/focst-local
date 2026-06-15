@@ -162,6 +162,68 @@ func (c *Client) Translate(ctx context.Context, request translation.RequestData)
 	return &responseData, nil
 }
 
+// CompleteText sends a plain text chat-completion request without JSON schema
+// forcing. It is used for local helper passes where experiments showed that
+// plaintext Markdown is more reliable than structured JSON.
+func (c *Client) CompleteText(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (*translation.TextCompletion, error) {
+	if maxTokens <= 0 {
+		maxTokens = c.maxTokens
+	}
+	payload := chatCompletionRequest{
+		Model: c.model,
+		Messages: []chatMessage{
+			{Role: "system", Content: systemPrompt},
+			{Role: "user", Content: userPrompt},
+		},
+		Temperature: DefaultTemperature,
+		TopP:        DefaultTopP,
+		TopK:        DefaultTopK,
+		MaxTokens:   maxTokens,
+		ResponseFormat: responseFormat{
+			Type: "text",
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal local LLM text request: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create local LLM text request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	client := c.translationClient
+	if client == nil {
+		client = httpclient.NewClient(DefaultTranslationTimeout)
+		c.translationClient = client
+	}
+	respBody, resp, err := httpclient.DoAndRead(client, httpReq)
+	if err != nil {
+		return nil, apperrors.Transient(fmt.Errorf("local LLM text request failed: %w", err))
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return nil, apperrors.Validation(fmt.Errorf("local LLM text status=%s body=%s", resp.Status, string(respBody)))
+	}
+
+	var completion chatCompletionResponse
+	if err := json.Unmarshal(respBody, &completion); err != nil {
+		return nil, apperrors.Validation(fmt.Errorf("failed to decode local LLM text response: %w", err))
+	}
+	if len(completion.Choices) == 0 {
+		return nil, apperrors.Validation(fmt.Errorf("local LLM text response had no choices"))
+	}
+	return &translation.TextCompletion{
+		Content: completion.Choices[0].Message.Content,
+		Usage: translation.UsageMetadata{
+			PromptTokenCount:     completion.Usage.PromptTokens,
+			CandidatesTokenCount: completion.Usage.CompletionTokens,
+			TotalTokenCount:      completion.Usage.TotalTokens,
+		},
+	}, nil
+}
+
 // PlanBoundary asks the local model to choose one split_after_id for a subtitle chunk boundary.
 func (c *Client) PlanBoundary(ctx context.Context, request chunker.BoundaryRequest) (chunker.BoundaryDecision, error) {
 	if len(request.Segments) == 0 {
@@ -344,7 +406,7 @@ type chatMessage struct {
 
 type responseFormat struct {
 	Type   string         `json:"type"`
-	Schema map[string]any `json:"schema"`
+	Schema map[string]any `json:"schema,omitempty"`
 }
 
 type chatCompletionResponse struct {
@@ -359,4 +421,5 @@ type chatCompletionResponse struct {
 }
 
 var _ translation.Translator = (*Client)(nil)
+var _ translation.TextCompleter = (*Client)(nil)
 var _ chunker.BoundaryPlanner = (*Client)(nil)

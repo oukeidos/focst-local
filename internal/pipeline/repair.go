@@ -7,6 +7,7 @@ import (
 
 	"github.com/oukeidos/focst-local/internal/chunker"
 	"github.com/oukeidos/focst-local/internal/files"
+	"github.com/oukeidos/focst-local/internal/glossary"
 	"github.com/oukeidos/focst-local/internal/language"
 	"github.com/oukeidos/focst-local/internal/llamaserver"
 	"github.com/oukeidos/focst-local/internal/localllm"
@@ -122,13 +123,33 @@ func RunRepair(ctx context.Context, cfg Config) (RepairResult, error) {
 			EnableSentenceAware: runtimeLog.ChunkBoundaryPlanner != ChunkBoundaryPlannerOff,
 		}, boundaryPlanner)
 	}
+	glossaryMapping := map[string]string(nil)
+	if runtimeLog.GlossaryPath != "" {
+		sum, err := glossary.ChecksumFile(runtimeLog.GlossaryPath)
+		if err != nil {
+			return RepairResult{}, fmt.Errorf("failed to checksum glossary artifact: %w", err)
+		}
+		if sum != logFile.GlossaryChecksum {
+			return RepairResult{}, fmt.Errorf("glossary artifact checksum mismatch: expected %s, got %s", logFile.GlossaryChecksum, sum)
+		}
+		artifact, err := glossary.LoadArtifact(runtimeLog.GlossaryPath)
+		if err != nil {
+			return RepairResult{}, err
+		}
+		glossaryMapping = glossary.Mapping(artifact.Entries)
+		logger.Info("Loaded local glossary", "count", len(glossaryMapping), "path", runtimeLog.GlossaryPath)
+	}
+	var nameMapping map[string]string
 	if runtimeLog.NamesPath != "" {
 		nameMapping, err := names.LoadMappingFile(runtimeLog.NamesPath, runtimeLog.SourceLang, runtimeLog.TargetLang)
 		if err != nil {
 			return RepairResult{}, fmt.Errorf("failed to load names mapping: %w", err)
 		}
-		tr.SetNamesMapping(nameMapping)
 		logger.Info("Loaded character name mapping", "count", len(nameMapping), "path", runtimeLog.NamesPath)
+	}
+	finalMapping := mergeMappings(glossaryMapping, nameMapping)
+	if len(finalMapping) > 0 {
+		tr.SetNamesMapping(finalMapping)
 	}
 
 	// 3. Repair
@@ -222,6 +243,13 @@ func resolveRuntimeSessionLog(logPath string, logFile *recovery.SessionLog) (rec
 			return recovery.SessionLog{}, fmt.Errorf("invalid recovery log: names_path not found: %s", logFile.NamesPath)
 		}
 		runtimeLog.NamesPath = resolvedNamesPath
+	}
+	if logFile.GlossaryPath != "" {
+		resolvedGlossaryPath := recovery.ResolveInputPath(logPath, logFile.GlossaryPath)
+		if _, err := os.Stat(resolvedGlossaryPath); err != nil {
+			return recovery.SessionLog{}, fmt.Errorf("invalid recovery log: glossary_path not found: %s", logFile.GlossaryPath)
+		}
+		runtimeLog.GlossaryPath = resolvedGlossaryPath
 	}
 
 	return runtimeLog, nil

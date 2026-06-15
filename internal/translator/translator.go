@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 
@@ -170,7 +171,13 @@ func (t *Translator) setSystemInstruction() {
 	// Inject Names Mapping if present
 	if len(t.namesMapping) > 0 {
 		mappingStr := "\n\nCRITICAL: The following character names MUST be translated as specified:\n"
-		for src, tgt := range t.namesMapping {
+		keys := make([]string, 0, len(t.namesMapping))
+		for src := range t.namesMapping {
+			keys = append(keys, src)
+		}
+		sort.Strings(keys)
+		for _, src := range keys {
+			tgt := t.namesMapping[src]
 			mappingStr += fmt.Sprintf("- %s -> %s\n", src, tgt)
 		}
 		prompt += mappingStr

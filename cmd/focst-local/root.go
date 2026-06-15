@@ -64,6 +64,7 @@ func newRootCmd() *cobra.Command {
 		newEnvCmd(),
 		newConfigCmd(),
 		newLicensesCmd(),
+		newGlossaryCmd(),
 	)
 
 	cmd.InitDefaultCompletionCmd()

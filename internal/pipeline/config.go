@@ -54,6 +54,15 @@ type Config struct {
 	NamesMapping map[string]string
 	NamesPath    string
 
+	// Local generated glossary. AutoGlossary generates a new glossary before
+	// translation; GlossaryPath reuses an existing glossary artifact.
+	AutoGlossary         bool
+	GlossaryPath         string
+	SaveGlossaryPath     string
+	GlossaryArtifactsDir string
+	GlossaryRuns         int
+	GlossaryWindowChunks int
+
 	// Callbacks
 	// OnProgress is called with translation progress updates.
 	OnProgress func(translator.TranslationProgress)
@@ -96,6 +105,12 @@ func (c Config) Normalize() (Config, []string) {
 	}
 	if c.MaxTokens <= 0 {
 		c.MaxTokens = localllm.DefaultMaxTokens
+	}
+	if c.GlossaryRuns <= 0 {
+		c.GlossaryRuns = 3
+	}
+	if c.GlossaryWindowChunks <= 0 {
+		c.GlossaryWindowChunks = 3
 	}
 	if c.LlamaServer.ModelAlias == "" {
 		c.LlamaServer.ModelAlias = c.Model
@@ -155,6 +170,18 @@ func (c Config) Validate() error {
 	}
 	if c.TranslationTimeout < 0 {
 		return fmt.Errorf("translationTimeout must be 0 or greater, got %s", c.TranslationTimeout)
+	}
+	if c.AutoGlossary && c.GlossaryPath != "" {
+		return fmt.Errorf("--auto-glossary and --glossary-file cannot be used together")
+	}
+	if c.SaveGlossaryPath != "" && !c.AutoGlossary {
+		return fmt.Errorf("--save-glossary requires --auto-glossary")
+	}
+	if c.GlossaryRuns <= 0 {
+		return fmt.Errorf("glossaryRuns must be greater than 0, got %d", c.GlossaryRuns)
+	}
+	if c.GlossaryWindowChunks <= 0 {
+		return fmt.Errorf("glossaryWindowChunks must be greater than 0, got %d", c.GlossaryWindowChunks)
 	}
 	if c.BaseURL == "" {
 		return fmt.Errorf("llama base URL is required")
