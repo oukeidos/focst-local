@@ -107,6 +107,50 @@ Run `./focst-local --help` or `./focst-local translate --help` for the current
 translation, preprocessing, postprocessing, chunking, logging, and recovery
 options.
 
+## Local Glossary
+
+`focst-local` can generate a local glossary with the same local model used for
+translation, then inject that glossary into the translation prompt. This helps
+keep names, organizations, recurring proper nouns, and specialized terms more
+consistent.
+
+Use `--auto-glossary` to generate and apply a glossary in one run:
+
+```bash
+./focst-local translate input.srt output.srt \
+  --source en \
+  --target ko \
+  --auto-glossary
+```
+
+Add `--save-glossary terms.glossary.json` when you want to keep the generated
+glossary artifact.
+
+To inspect or edit the glossary first, split the workflow:
+
+```bash
+./focst-local glossary extract input.srt terms.glossary.json \
+  --source en \
+  --target ko
+
+./focst-local translate input.srt output.srt \
+  --source en \
+  --target ko \
+  --glossary-file terms.glossary.json
+```
+
+The default glossary pass runs extraction 3 times per glossary window and merges
+the results by vote. Use `--glossary-runs 10` when you want a more stable
+glossary artifact before translation.
+
+Known limits:
+
+- Generated glossaries are stochastic; save and inspect them for important jobs.
+- More runs reduce random variation, but cannot fix systematically wrong terms.
+- The glossary mainly improves terminology consistency, not general sentence
+  translation quality.
+- Explicit `--names` mappings take priority over generated glossary entries.
+
 ## Local Runtime Flags
 
 - `--llama-base-url`: OpenAI-compatible llama.cpp base URL.

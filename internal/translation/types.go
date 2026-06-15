@@ -39,6 +39,19 @@ type UsageMetadata struct {
 	WebSearchCount       int
 }
 
+// TextCompletion is a raw text chat-completion result used by non-translation
+// helper passes such as local glossary extraction.
+type TextCompletion struct {
+	Content string
+	Usage   UsageMetadata
+}
+
+// TextCompleter is implemented by local chat-completion backends that can
+// return plain text without structured JSON schema forcing.
+type TextCompleter interface {
+	CompleteText(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (*TextCompletion, error)
+}
+
 // SourceTextFromLines normalizes one subtitle segment into the single text
 // block sent to local models.
 func SourceTextFromLines(lines []string) string {

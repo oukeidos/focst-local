@@ -93,3 +93,45 @@ func TestTranslationTimeoutFlag_Parse(t *testing.T) {
 		})
 	}
 }
+
+func TestGlossaryFlags_Parse(t *testing.T) {
+	cases := [][]string{
+		{"--auto-glossary"},
+		{"--save-glossary", "out.glossary.json"},
+		{"--glossary-file", "existing.glossary.json"},
+		{"--glossary-artifacts", "out.glossary"},
+		{"--glossary-runs", "10"},
+		{"--glossary-window-chunks", "4"},
+		{"translate", "--auto-glossary"},
+		{"glossary", "extract", "--glossary-runs", "10"},
+		{"glossary", "extract", "--glossary-window-chunks", "4"},
+		{"glossary", "extract", "--glossary-artifacts", "artifacts"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			out, err := executeCommand(t, args...)
+			if err == nil {
+				t.Fatalf("expected command error from missing required args, got nil")
+			}
+			if strings.Contains(out, "unknown flag") {
+				t.Fatalf("expected glossary flag to parse, got output: %s", out)
+			}
+		})
+	}
+}
+
+func TestGlossaryFlags_RejectAmbiguousAutoAndFile(t *testing.T) {
+	_, err := executeCommand(t,
+		"translate",
+		"input.srt",
+		"output.srt",
+		"--auto-glossary",
+		"--glossary-file", "existing.glossary.json",
+	)
+	if err == nil {
+		t.Fatalf("expected ambiguous glossary flag error")
+	}
+	if !strings.Contains(err.Error(), "--auto-glossary and --glossary-file cannot be used together") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

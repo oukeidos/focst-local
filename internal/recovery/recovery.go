@@ -19,41 +19,45 @@ import (
 
 // SessionLog stores the state of a translation session for later repair.
 type SessionLog struct {
-	LogVersion           int                `json:"log_version"`
-	InputPath            string             `json:"input_path"`
-	OutputPath           string             `json:"output_path"`
-	InputHash            string             `json:"input_hash"`
-	SegmentsChecksum     string             `json:"segments_checksum"`
-	Model                string             `json:"model"`
-	Provider             string             `json:"provider"`
-	BaseURL              string             `json:"base_url"`
-	LlamaServerMode      string             `json:"llama_server_mode,omitempty"`
-	LlamaServerBin       string             `json:"llama_server_bin,omitempty"`
-	LlamaModelPath       string             `json:"llama_model_path,omitempty"`
-	LlamaCtxSize         int                `json:"llama_ctx_size,omitempty"`
-	LlamaParallel        int                `json:"llama_parallel,omitempty"`
-	LlamaExtraArgs       []string           `json:"llama_extra_args,omitempty"`
-	LlamaLogFile         string             `json:"llama_log_file,omitempty"`
-	MaxTokens            int                `json:"max_tokens"`
-	NamesPath            string             `json:"names_path,omitempty"`
-	ChunkSize            int                `json:"chunk_size"`
-	ContextSize          int                `json:"context_size"`
-	SentenceAwareChunks  bool               `json:"sentence_aware_chunks,omitempty"`
-	MinChunkSize         int                `json:"min_chunk_size,omitempty"`
-	MaxChunkSize         int                `json:"max_chunk_size,omitempty"`
-	ChunkBoundaryPlanner string             `json:"chunk_boundary_planner,omitempty"`
-	ChunkPlan            *chunker.ChunkPlan `json:"chunk_plan,omitempty"`
-	Concurrency          int                `json:"concurrency"`
-	NoPreprocess         bool               `json:"no_preprocess"`
-	NoPostprocess        bool               `json:"no_postprocess"`
-	NoLangPreprocess     bool               `json:"no_lang_preprocess"`
-	NoLangPostprocess    bool               `json:"no_lang_postprocess"`
-	SourceLang           string             `json:"source_lang"`
-	TargetLang           string             `json:"target_lang"`
-	FailedChunks         []int              `json:"failed_chunks"`
-	TotalChunks          int                `json:"total_chunks"`
-	Status               string             `json:"status"` // "Success", "Partial Success", "Failure"
-	StatusReason         string             `json:"status_reason,omitempty"`
+	LogVersion            int                `json:"log_version"`
+	InputPath             string             `json:"input_path"`
+	OutputPath            string             `json:"output_path"`
+	InputHash             string             `json:"input_hash"`
+	SegmentsChecksum      string             `json:"segments_checksum"`
+	Model                 string             `json:"model"`
+	Provider              string             `json:"provider"`
+	BaseURL               string             `json:"base_url"`
+	LlamaServerMode       string             `json:"llama_server_mode,omitempty"`
+	LlamaServerBin        string             `json:"llama_server_bin,omitempty"`
+	LlamaModelPath        string             `json:"llama_model_path,omitempty"`
+	LlamaCtxSize          int                `json:"llama_ctx_size,omitempty"`
+	LlamaParallel         int                `json:"llama_parallel,omitempty"`
+	LlamaExtraArgs        []string           `json:"llama_extra_args,omitempty"`
+	LlamaLogFile          string             `json:"llama_log_file,omitempty"`
+	MaxTokens             int                `json:"max_tokens"`
+	NamesPath             string             `json:"names_path,omitempty"`
+	GlossaryPath          string             `json:"glossary_path,omitempty"`
+	GlossaryChecksum      string             `json:"glossary_checksum,omitempty"`
+	GlossaryPromptVersion string             `json:"glossary_prompt_version,omitempty"`
+	GlossaryOverrideCount int                `json:"glossary_override_count,omitempty"`
+	ChunkSize             int                `json:"chunk_size"`
+	ContextSize           int                `json:"context_size"`
+	SentenceAwareChunks   bool               `json:"sentence_aware_chunks,omitempty"`
+	MinChunkSize          int                `json:"min_chunk_size,omitempty"`
+	MaxChunkSize          int                `json:"max_chunk_size,omitempty"`
+	ChunkBoundaryPlanner  string             `json:"chunk_boundary_planner,omitempty"`
+	ChunkPlan             *chunker.ChunkPlan `json:"chunk_plan,omitempty"`
+	Concurrency           int                `json:"concurrency"`
+	NoPreprocess          bool               `json:"no_preprocess"`
+	NoPostprocess         bool               `json:"no_postprocess"`
+	NoLangPreprocess      bool               `json:"no_lang_preprocess"`
+	NoLangPostprocess     bool               `json:"no_lang_postprocess"`
+	SourceLang            string             `json:"source_lang"`
+	TargetLang            string             `json:"target_lang"`
+	FailedChunks          []int              `json:"failed_chunks"`
+	TotalChunks           int                `json:"total_chunks"`
+	Status                string             `json:"status"` // "Success", "Partial Success", "Failure"
+	StatusReason          string             `json:"status_reason,omitempty"`
 }
 
 const CurrentLogVersion = 5
@@ -87,6 +91,17 @@ func (log *SessionLog) Validate() error {
 	if log.NamesPath != "" {
 		if filepath.IsAbs(log.NamesPath) {
 			return fmt.Errorf("names_path must be relative, not absolute: %s", log.NamesPath)
+		}
+	}
+	if log.GlossaryPath != "" {
+		if filepath.IsAbs(log.GlossaryPath) {
+			return fmt.Errorf("glossary_path must be relative, not absolute: %s", log.GlossaryPath)
+		}
+		if log.GlossaryChecksum == "" {
+			return fmt.Errorf("glossary_checksum is required when glossary_path is set")
+		}
+		if !strings.HasPrefix(log.GlossaryChecksum, "sha256:") {
+			return fmt.Errorf("invalid glossary_checksum: %s", log.GlossaryChecksum)
 		}
 	}
 	if log.InputHash == "" {

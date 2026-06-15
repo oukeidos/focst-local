@@ -14,11 +14,13 @@ import (
 	"github.com/google/uuid"
 	"github.com/oukeidos/focst-local/internal/chunker"
 	"github.com/oukeidos/focst-local/internal/files"
+	"github.com/oukeidos/focst-local/internal/glossary"
 	"github.com/oukeidos/focst-local/internal/language"
 	"github.com/oukeidos/focst-local/internal/localllm"
 	"github.com/oukeidos/focst-local/internal/logger"
 	"github.com/oukeidos/focst-local/internal/recovery"
 	"github.com/oukeidos/focst-local/internal/srt"
+	"github.com/oukeidos/focst-local/internal/translation"
 	"github.com/oukeidos/focst-local/internal/translator"
 )
 
@@ -61,6 +63,21 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 	}
 	if cfg.LogPath != "" {
 		if err := files.RejectSymlinkPath(cfg.LogPath); err != nil {
+			return TranslationResult{}, err
+		}
+	}
+	if cfg.GlossaryPath != "" {
+		if err := files.RejectSymlinkPath(cfg.GlossaryPath); err != nil {
+			return TranslationResult{}, err
+		}
+	}
+	if cfg.SaveGlossaryPath != "" {
+		if err := files.RejectSymlinkPath(cfg.SaveGlossaryPath); err != nil {
+			return TranslationResult{}, err
+		}
+	}
+	if cfg.GlossaryArtifactsDir != "" {
+		if err := files.RejectSymlinkPath(cfg.GlossaryArtifactsDir); err != nil {
 			return TranslationResult{}, err
 		}
 	}
@@ -135,9 +152,70 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 		boundaryPlanner = client
 	}
 	tr.SetChunkPlanning(cfg.ChunkPlanOptions(), boundaryPlanner)
-	if len(cfg.NamesMapping) > 0 {
-		tr.SetNamesMapping(cfg.NamesMapping)
-		logger.Info("Loaded character name mapping", "count", len(cfg.NamesMapping))
+	glossaryMapping := map[string]string(nil)
+	effectiveGlossaryPath := cfg.GlossaryPath
+	glossaryChecksum := ""
+	glossaryPromptVersion := ""
+	var glossaryUsage translation.UsageMetadata
+	if cfg.AutoGlossary {
+		if err := confirmGeneratedGlossaryOverwrite(cfg); err != nil {
+			return TranslationResult{}, err
+		}
+		_, planned, err := chunker.PlanChunks(ctx, segments, cfg.ChunkPlanOptions(), boundaryPlanner)
+		if err != nil {
+			return TranslationResult{}, fmt.Errorf("failed to plan chunks for glossary extraction: %w", err)
+		}
+		artifact, usage, err := extractGlossaryWithClient(ctx, cfg, client, segments, planned, srcLang, tgtLang)
+		if err != nil {
+			return TranslationResult{}, err
+		}
+		glossaryUsage = usage
+		glossaryMapping = glossary.Mapping(artifact.Entries)
+		glossaryPromptVersion = artifact.PromptVersion
+		if cfg.SaveGlossaryPath != "" {
+			if err := glossary.SaveArtifact(cfg.SaveGlossaryPath, artifact); err != nil {
+				return TranslationResult{}, err
+			}
+			checksum, err := glossary.ChecksumFile(cfg.SaveGlossaryPath)
+			if err != nil {
+				return TranslationResult{}, fmt.Errorf("failed to checksum generated glossary: %w", err)
+			}
+			effectiveGlossaryPath = cfg.SaveGlossaryPath
+			glossaryChecksum = checksum
+		}
+		tr.SetChunkPlan(planned)
+		logger.Info("Generated local glossary",
+			"event", "glossary_generated",
+			"saved", cfg.SaveGlossaryPath != "",
+			"path", effectiveGlossaryPath,
+			"entries", len(artifact.Entries),
+			"rejected", artifact.RejectedCount,
+			"checksum", glossaryChecksum,
+		)
+	} else if cfg.GlossaryPath != "" {
+		artifact, err := glossary.LoadArtifact(cfg.GlossaryPath)
+		if err != nil {
+			return TranslationResult{}, err
+		}
+		checksum, err := glossary.ChecksumFile(cfg.GlossaryPath)
+		if err != nil {
+			return TranslationResult{}, fmt.Errorf("failed to checksum glossary: %w", err)
+		}
+		glossaryMapping = glossary.Mapping(artifact.Entries)
+		glossaryChecksum = checksum
+		glossaryPromptVersion = artifact.PromptVersion
+		logger.Info("Loaded local glossary",
+			"event", "glossary_loaded",
+			"path", cfg.GlossaryPath,
+			"entries", len(artifact.Entries),
+			"checksum", checksum,
+		)
+	}
+	finalMapping := mergeMappings(glossaryMapping, cfg.NamesMapping)
+	glossaryOverrideCount := mappingOverrideCount(glossaryMapping, cfg.NamesMapping)
+	if len(finalMapping) > 0 {
+		tr.SetNamesMapping(finalMapping)
+		logger.Info("Loaded translation mapping", "count", len(finalMapping), "glossary_entries", len(glossaryMapping), "names_entries", len(cfg.NamesMapping), "glossary_overrides", glossaryOverrideCount)
 	}
 
 	// 4. Translate
@@ -153,7 +231,7 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 	)
 	translated, failed, err := tr.TranslateSRT(ctx, segments, cfg.OnProgress)
 	if err != nil {
-		return TranslationResult{Usage: tr.GetUsage()}, fmt.Errorf("fatal translation error: %w", err)
+		return TranslationResult{Usage: addUsage(glossaryUsage, tr.GetUsage())}, fmt.Errorf("fatal translation error: %w", err)
 	}
 
 	// 5. Handle Results
@@ -165,7 +243,7 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 	status := translationStatusFromRecovery(recovery.CalculateStatus(len(failed), totalChunks))
 	result := TranslationResult{
 		Status:       status,
-		Usage:        tr.GetUsage(),
+		Usage:        addUsage(glossaryUsage, tr.GetUsage()),
 		FailedChunks: len(failed),
 		TotalChunks:  totalChunks,
 	}
@@ -230,41 +308,52 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 				return result, fmt.Errorf("failed to convert names path to relative: %w", err)
 			}
 		}
+		relativeGlossaryPath := ""
+		if effectiveGlossaryPath != "" {
+			relativeGlossaryPath, err = recovery.ToRelativeInputPath(logPath, effectiveGlossaryPath)
+			if err != nil {
+				return result, fmt.Errorf("failed to convert glossary path to relative: %w", err)
+			}
+		}
 
 		session := &recovery.SessionLog{
-			LogVersion:           recovery.CurrentLogVersion,
-			InputPath:            relativeInputPath,
-			OutputPath:           relativeOutputPath,
-			InputHash:            inputHash,
-			SegmentsChecksum:     segmentsChecksum,
-			Model:                cfg.Model,
-			Provider:             "llama.cpp",
-			BaseURL:              cfg.BaseURL,
-			LlamaServerMode:      string(server.Config.Mode),
-			LlamaServerBin:       server.Config.ServerBin,
-			LlamaModelPath:       server.Config.ModelPath,
-			LlamaCtxSize:         server.Config.CtxSize,
-			LlamaParallel:        server.Config.Parallel,
-			LlamaExtraArgs:       append([]string(nil), server.Config.ExtraArgs...),
-			LlamaLogFile:         server.LogFile,
-			MaxTokens:            cfg.MaxTokens,
-			NamesPath:            relativeNamesPath,
-			ChunkSize:            cfg.ChunkSize,
-			ContextSize:          cfg.ContextSize,
-			SentenceAwareChunks:  cfg.SentenceAwareChunks,
-			MinChunkSize:         cfg.MinChunkSize,
-			MaxChunkSize:         cfg.MaxChunkSize,
-			ChunkBoundaryPlanner: cfg.ChunkBoundaryPlanner,
-			Concurrency:          cfg.Concurrency,
-			NoPreprocess:         cfg.NoPreprocess,
-			NoPostprocess:        cfg.NoPostprocess,
-			NoLangPreprocess:     cfg.NoLangPreprocess,
-			NoLangPostprocess:    cfg.NoLangPostprocess,
-			SourceLang:           srcLang.Code,
-			TargetLang:           tgtLang.Code,
-			FailedChunks:         failed,
-			TotalChunks:          totalChunks,
-			Status:               string(status),
+			LogVersion:            recovery.CurrentLogVersion,
+			InputPath:             relativeInputPath,
+			OutputPath:            relativeOutputPath,
+			InputHash:             inputHash,
+			SegmentsChecksum:      segmentsChecksum,
+			Model:                 cfg.Model,
+			Provider:              "llama.cpp",
+			BaseURL:               cfg.BaseURL,
+			LlamaServerMode:       string(server.Config.Mode),
+			LlamaServerBin:        server.Config.ServerBin,
+			LlamaModelPath:        server.Config.ModelPath,
+			LlamaCtxSize:          server.Config.CtxSize,
+			LlamaParallel:         server.Config.Parallel,
+			LlamaExtraArgs:        append([]string(nil), server.Config.ExtraArgs...),
+			LlamaLogFile:          server.LogFile,
+			MaxTokens:             cfg.MaxTokens,
+			NamesPath:             relativeNamesPath,
+			GlossaryPath:          relativeGlossaryPath,
+			GlossaryChecksum:      glossaryChecksum,
+			GlossaryPromptVersion: glossaryPromptVersion,
+			GlossaryOverrideCount: glossaryOverrideCount,
+			ChunkSize:             cfg.ChunkSize,
+			ContextSize:           cfg.ContextSize,
+			SentenceAwareChunks:   cfg.SentenceAwareChunks,
+			MinChunkSize:          cfg.MinChunkSize,
+			MaxChunkSize:          cfg.MaxChunkSize,
+			ChunkBoundaryPlanner:  cfg.ChunkBoundaryPlanner,
+			Concurrency:           cfg.Concurrency,
+			NoPreprocess:          cfg.NoPreprocess,
+			NoPostprocess:         cfg.NoPostprocess,
+			NoLangPreprocess:      cfg.NoLangPreprocess,
+			NoLangPostprocess:     cfg.NoLangPostprocess,
+			SourceLang:            srcLang.Code,
+			TargetLang:            tgtLang.Code,
+			FailedChunks:          failed,
+			TotalChunks:           totalChunks,
+			Status:                string(status),
 		}
 		if len(chunkPlan.Chunks) > 0 {
 			session.ChunkPlan = &chunkPlan
@@ -323,5 +412,60 @@ func writeIDMap(logPath string, mapping []srt.IDMap) error {
 		"mapping_count", len(mapping),
 		"mapping_hash", "sha256:"+hex.EncodeToString(sum[:]),
 	)
+	return nil
+}
+
+func mergeMappings(base, overrides map[string]string) map[string]string {
+	if len(base) == 0 && len(overrides) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(base)+len(overrides))
+	for src, tgt := range base {
+		out[src] = tgt
+	}
+	for src, tgt := range overrides {
+		out[src] = tgt
+	}
+	return out
+}
+
+func mappingOverrideCount(base, overrides map[string]string) int {
+	if len(base) == 0 || len(overrides) == 0 {
+		return 0
+	}
+	count := 0
+	for key := range overrides {
+		if _, ok := base[key]; ok {
+			count++
+		}
+	}
+	return count
+}
+
+func addUsage(a, b translation.UsageMetadata) translation.UsageMetadata {
+	return translation.UsageMetadata{
+		PromptTokenCount:     a.PromptTokenCount + b.PromptTokenCount,
+		CandidatesTokenCount: a.CandidatesTokenCount + b.CandidatesTokenCount,
+		TotalTokenCount:      a.TotalTokenCount + b.TotalTokenCount,
+		WebSearchCount:       a.WebSearchCount + b.WebSearchCount,
+	}
+}
+
+func confirmGeneratedGlossaryOverwrite(cfg Config) error {
+	if cfg.SaveGlossaryPath == "" {
+		return nil
+	}
+	if _, err := os.Stat(cfg.SaveGlossaryPath); err == nil {
+		overwrite := cfg.Overwrite
+		if cfg.OnConfirmOverwrite != nil {
+			overwrite = cfg.OnConfirmOverwrite(cfg.SaveGlossaryPath)
+		}
+		if !overwrite {
+			return fmt.Errorf("glossary output exists: %s", cfg.SaveGlossaryPath)
+		}
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to stat glossary output path: %w", err)
+	}
 	return nil
 }
