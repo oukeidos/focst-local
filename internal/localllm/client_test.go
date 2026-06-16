@@ -179,6 +179,55 @@ func TestClient_CompleteTextUsesTextResponseFormat(t *testing.T) {
 	}
 }
 
+func TestClient_CompleteTextChatWithSamplerOmitsResponseFormat(t *testing.T) {
+	var got map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("failed to decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices": [{"message": {"role": "assistant", "content": "| Row | Category |\n| --- | --- |"}}],
+			"usage": {"prompt_tokens": 5, "completion_tokens": 6, "total_tokens": 11}
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL+"/v1", "test-model")
+	resp, err := client.CompleteTextChatWithSampler(context.Background(), []TextChatMessage{
+		{Role: "system", Content: "system prompt"},
+		{Role: "user", Content: "user prompt"},
+	}, 2048, 0, 0.95, 64)
+	if err != nil {
+		t.Fatalf("CompleteTextChatWithSampler failed: %v", err)
+	}
+	if resp.Usage.TotalTokenCount != 11 {
+		t.Fatalf("unexpected usage: %+v", resp.Usage)
+	}
+	if _, ok := got["response_format"]; ok {
+		t.Fatalf("plain text chat request should not include response_format: %+v", got["response_format"])
+	}
+	if got["max_tokens"].(float64) != 2048 {
+		t.Fatalf("max_tokens = %+v, want 2048", got["max_tokens"])
+	}
+	if got["temperature"].(float64) != 0 {
+		t.Fatalf("temperature = %+v, want 0", got["temperature"])
+	}
+	if got["top_p"].(float64) != 0.95 {
+		t.Fatalf("top_p = %+v, want 0.95", got["top_p"])
+	}
+	if got["top_k"].(float64) != 64 {
+		t.Fatalf("top_k = %+v, want 64", got["top_k"])
+	}
+	messages := got["messages"].([]any)
+	if len(messages) != 2 || messages[0].(map[string]any)["role"] != "system" || messages[1].(map[string]any)["role"] != "user" {
+		t.Fatalf("unexpected messages: %+v", messages)
+	}
+}
+
 func TestClient_PlanBoundary(t *testing.T) {
 	var got chatCompletionRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

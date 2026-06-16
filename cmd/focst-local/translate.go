@@ -12,6 +12,7 @@ import (
 	"github.com/oukeidos/focst-local/internal/files"
 	"github.com/oukeidos/focst-local/internal/localllm"
 	"github.com/oukeidos/focst-local/internal/logger"
+	"github.com/oukeidos/focst-local/internal/phraseanchor"
 	"github.com/oukeidos/focst-local/internal/pipeline"
 	"github.com/oukeidos/focst-local/internal/prompt"
 	"github.com/oukeidos/focst-local/internal/translator"
@@ -19,34 +20,43 @@ import (
 )
 
 type translateOptions struct {
-	modelName             string
-	baseURL               string
-	maxTokens             int
-	translationTimeout    time.Duration
-	chunkSize             int
-	contextSize           int
-	concurrency           int
-	noSentenceAwareChunks bool
-	minChunkSize          int
-	maxChunkSize          int
-	chunkBoundaryPlanner  string
-	yes                   bool
-	logFilePath           string
-	namesPath             string
-	autoGlossary          bool
-	saveGlossaryPath      string
-	glossaryFilePath      string
-	glossaryArtifactsDir  string
-	glossaryRuns          int
-	glossaryWindowChunks  int
-	noPreprocess          bool
-	noPostprocess         bool
-	noLangPreprocess      bool
-	noLangPostprocess     bool
-	sourceLangCode        string
-	targetLangCode        string
-	debug                 bool
-	llama                 llamaServerOptions
+	modelName                            string
+	baseURL                              string
+	maxTokens                            int
+	translationTimeout                   time.Duration
+	chunkSize                            int
+	contextSize                          int
+	concurrency                          int
+	noSentenceAwareChunks                bool
+	minChunkSize                         int
+	maxChunkSize                         int
+	chunkBoundaryPlanner                 string
+	yes                                  bool
+	logFilePath                          string
+	namesPath                            string
+	autoGlossary                         bool
+	saveGlossaryPath                     string
+	glossaryFilePath                     string
+	glossaryArtifactsDir                 string
+	glossaryRuns                         int
+	glossaryWindowChunks                 int
+	autoPhraseAnchors                    bool
+	savePhraseAnchorsPath                string
+	phraseAnchorsFilePath                string
+	phraseAnchorsArtifactsDir            string
+	phraseAnchorThesisRounds             int
+	phraseAnchorVotes                    int
+	phraseAnchorQuoteFilterBatchSize     int
+	phraseAnchorProperFilterRuns         int
+	phraseAnchorProperFilterWindowChunks int
+	noPreprocess                         bool
+	noPostprocess                        bool
+	noLangPreprocess                     bool
+	noLangPostprocess                    bool
+	sourceLangCode                       string
+	targetLangCode                       string
+	debug                                bool
+	llama                                llamaServerOptions
 }
 
 func newTranslateCmd() *cobra.Command {
@@ -90,6 +100,15 @@ func addTranslateFlags(cmd *cobra.Command, opts *translateOptions) {
 	cmd.Flags().StringVar(&opts.glossaryArtifactsDir, "glossary-artifacts", "", "Directory for local glossary debug artifacts")
 	cmd.Flags().IntVar(&opts.glossaryRuns, "glossary-runs", 3, "Number of local glossary extraction runs per glossary window")
 	cmd.Flags().IntVar(&opts.glossaryWindowChunks, "glossary-window-chunks", 3, "Number of translation chunks per glossary extraction window")
+	cmd.Flags().BoolVar(&opts.autoPhraseAnchors, "auto-phrase-anchors", false, "Generate and use local phrase anchors for this translation")
+	cmd.Flags().StringVar(&opts.savePhraseAnchorsPath, "save-phrase-anchors", "", "Path to save the generated phrase anchors JSON")
+	cmd.Flags().StringVar(&opts.phraseAnchorsFilePath, "phrase-anchors-file", "", "Path to an existing phrase anchors JSON file to use")
+	cmd.Flags().StringVar(&opts.phraseAnchorsArtifactsDir, "phrase-anchors-artifacts", "", "Directory for phrase anchors debug artifacts")
+	cmd.Flags().IntVar(&opts.phraseAnchorThesisRounds, "phrase-anchor-thesis-rounds", phraseanchor.DefaultThesisRounds, "Number of phrase anchor candidate discovery rounds")
+	cmd.Flags().IntVar(&opts.phraseAnchorVotes, "phrase-anchor-votes", phraseanchor.DefaultSynthesisVotes, "Number of phrase anchor A/B synthesis votes")
+	cmd.Flags().IntVar(&opts.phraseAnchorQuoteFilterBatchSize, "phrase-anchor-quote-filter-batch-size", phraseanchor.DefaultQuoteFilterBatchSize, "Batch size for phrase anchor quote-kind filtering")
+	cmd.Flags().IntVar(&opts.phraseAnchorProperFilterRuns, "phrase-anchor-proper-filter-runs", phraseanchor.DefaultProperFilterRuns, "Number of phrase anchor source-name filter runs")
+	cmd.Flags().IntVar(&opts.phraseAnchorProperFilterWindowChunks, "phrase-anchor-proper-filter-window-chunks", phraseanchor.DefaultProperFilterWindowChunks, "Number of translation chunks per phrase anchor source-name filter window")
 	cmd.Flags().BoolVar(&opts.noPreprocess, "no-preprocess", false, "Disable all preprocessing (bracket removal, symbol filtering)")
 	cmd.Flags().BoolVar(&opts.noLangPreprocess, "no-lang-preprocess", false, "Disable language-specific preprocessing only")
 	cmd.Flags().BoolVar(&opts.noPostprocess, "no-postprocess", false, "Disable all post-processing (punctuation, timing correction)")
@@ -147,36 +166,45 @@ func runTranslate(cmd *cobra.Command, args []string, opts *translateOptions) err
 	}
 
 	cfg := pipeline.Config{
-		InputPath:            args[0],
-		OutputPath:           args[1],
-		LogPath:              opts.logFilePath,
-		BaseURL:              launchCfg.BaseURL,
-		Model:                launchCfg.ModelAlias,
-		LlamaServer:          launchCfg,
-		MaxTokens:            opts.maxTokens,
-		TranslationTimeout:   opts.translationTimeout,
-		ChunkSize:            opts.chunkSize,
-		ContextSize:          opts.contextSize,
-		Concurrency:          opts.concurrency,
-		SentenceAwareChunks:  !opts.noSentenceAwareChunks && opts.chunkBoundaryPlanner != pipeline.ChunkBoundaryPlannerOff,
-		MinChunkSize:         opts.minChunkSize,
-		MaxChunkSize:         opts.maxChunkSize,
-		ChunkBoundaryPlanner: opts.chunkBoundaryPlanner,
-		NoPreprocess:         opts.noPreprocess,
-		NoPostprocess:        opts.noPostprocess,
-		NoLangPreprocess:     opts.noLangPreprocess,
-		NoLangPostprocess:    opts.noLangPostprocess,
-		Overwrite:            opts.yes,
-		SourceLang:           opts.sourceLangCode,
-		TargetLang:           opts.targetLangCode,
-		NamesMapping:         nameMapping,
-		NamesPath:            opts.namesPath,
-		AutoGlossary:         opts.autoGlossary,
-		SaveGlossaryPath:     opts.saveGlossaryPath,
-		GlossaryPath:         opts.glossaryFilePath,
-		GlossaryArtifactsDir: opts.glossaryArtifactsDir,
-		GlossaryRuns:         opts.glossaryRuns,
-		GlossaryWindowChunks: opts.glossaryWindowChunks,
+		InputPath:                            args[0],
+		OutputPath:                           args[1],
+		LogPath:                              opts.logFilePath,
+		BaseURL:                              launchCfg.BaseURL,
+		Model:                                launchCfg.ModelAlias,
+		LlamaServer:                          launchCfg,
+		MaxTokens:                            opts.maxTokens,
+		TranslationTimeout:                   opts.translationTimeout,
+		ChunkSize:                            opts.chunkSize,
+		ContextSize:                          opts.contextSize,
+		Concurrency:                          opts.concurrency,
+		SentenceAwareChunks:                  !opts.noSentenceAwareChunks && opts.chunkBoundaryPlanner != pipeline.ChunkBoundaryPlannerOff,
+		MinChunkSize:                         opts.minChunkSize,
+		MaxChunkSize:                         opts.maxChunkSize,
+		ChunkBoundaryPlanner:                 opts.chunkBoundaryPlanner,
+		NoPreprocess:                         opts.noPreprocess,
+		NoPostprocess:                        opts.noPostprocess,
+		NoLangPreprocess:                     opts.noLangPreprocess,
+		NoLangPostprocess:                    opts.noLangPostprocess,
+		Overwrite:                            opts.yes,
+		SourceLang:                           opts.sourceLangCode,
+		TargetLang:                           opts.targetLangCode,
+		NamesMapping:                         nameMapping,
+		NamesPath:                            opts.namesPath,
+		AutoGlossary:                         opts.autoGlossary,
+		SaveGlossaryPath:                     opts.saveGlossaryPath,
+		GlossaryPath:                         opts.glossaryFilePath,
+		GlossaryArtifactsDir:                 opts.glossaryArtifactsDir,
+		GlossaryRuns:                         opts.glossaryRuns,
+		GlossaryWindowChunks:                 opts.glossaryWindowChunks,
+		AutoPhraseAnchors:                    opts.autoPhraseAnchors,
+		SavePhraseAnchorsPath:                opts.savePhraseAnchorsPath,
+		PhraseAnchorsPath:                    opts.phraseAnchorsFilePath,
+		PhraseAnchorsArtifactsDir:            opts.phraseAnchorsArtifactsDir,
+		PhraseAnchorThesisRounds:             opts.phraseAnchorThesisRounds,
+		PhraseAnchorVotes:                    opts.phraseAnchorVotes,
+		PhraseAnchorQuoteFilterBatchSize:     opts.phraseAnchorQuoteFilterBatchSize,
+		PhraseAnchorProperFilterRuns:         opts.phraseAnchorProperFilterRuns,
+		PhraseAnchorProperFilterWindowChunks: opts.phraseAnchorProperFilterWindowChunks,
 		OnProgress: func(p translator.TranslationProgress) {
 			switch p.State {
 			case translator.StateCompleted:

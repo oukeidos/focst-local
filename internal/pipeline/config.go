@@ -7,6 +7,7 @@ import (
 	"github.com/oukeidos/focst-local/internal/chunker"
 	"github.com/oukeidos/focst-local/internal/llamaserver"
 	"github.com/oukeidos/focst-local/internal/localllm"
+	"github.com/oukeidos/focst-local/internal/phraseanchor"
 	"github.com/oukeidos/focst-local/internal/translator"
 )
 
@@ -63,6 +64,19 @@ type Config struct {
 	GlossaryRuns         int
 	GlossaryWindowChunks int
 
+	// Local generated phrase anchors. AutoPhraseAnchors generates a new
+	// chunk-local artifact before translation; PhraseAnchorsPath reuses an
+	// existing phrase anchor artifact and its saved chunk plan.
+	AutoPhraseAnchors                    bool
+	PhraseAnchorsPath                    string
+	SavePhraseAnchorsPath                string
+	PhraseAnchorsArtifactsDir            string
+	PhraseAnchorThesisRounds             int
+	PhraseAnchorVotes                    int
+	PhraseAnchorQuoteFilterBatchSize     int
+	PhraseAnchorProperFilterRuns         int
+	PhraseAnchorProperFilterWindowChunks int
+
 	// Callbacks
 	// OnProgress is called with translation progress updates.
 	OnProgress func(translator.TranslationProgress)
@@ -111,6 +125,21 @@ func (c Config) Normalize() (Config, []string) {
 	}
 	if c.GlossaryWindowChunks <= 0 {
 		c.GlossaryWindowChunks = 3
+	}
+	if c.PhraseAnchorThesisRounds <= 0 {
+		c.PhraseAnchorThesisRounds = phraseanchor.DefaultThesisRounds
+	}
+	if c.PhraseAnchorVotes <= 0 {
+		c.PhraseAnchorVotes = phraseanchor.DefaultSynthesisVotes
+	}
+	if c.PhraseAnchorQuoteFilterBatchSize <= 0 {
+		c.PhraseAnchorQuoteFilterBatchSize = phraseanchor.DefaultQuoteFilterBatchSize
+	}
+	if c.PhraseAnchorProperFilterRuns <= 0 {
+		c.PhraseAnchorProperFilterRuns = phraseanchor.DefaultProperFilterRuns
+	}
+	if c.PhraseAnchorProperFilterWindowChunks <= 0 {
+		c.PhraseAnchorProperFilterWindowChunks = phraseanchor.DefaultProperFilterWindowChunks
 	}
 	if c.LlamaServer.ModelAlias == "" {
 		c.LlamaServer.ModelAlias = c.Model
@@ -182,6 +211,30 @@ func (c Config) Validate() error {
 	}
 	if c.GlossaryWindowChunks <= 0 {
 		return fmt.Errorf("glossaryWindowChunks must be greater than 0, got %d", c.GlossaryWindowChunks)
+	}
+	if c.AutoPhraseAnchors && c.PhraseAnchorsPath != "" {
+		return fmt.Errorf("--auto-phrase-anchors and --phrase-anchors-file cannot be used together")
+	}
+	if c.SavePhraseAnchorsPath != "" && !c.AutoPhraseAnchors {
+		return fmt.Errorf("--save-phrase-anchors requires --auto-phrase-anchors")
+	}
+	if (c.AutoPhraseAnchors || c.PhraseAnchorsPath != "") && c.Concurrency != 1 {
+		return fmt.Errorf("phrase anchors require --concurrency 1")
+	}
+	if c.PhraseAnchorThesisRounds <= 0 {
+		return fmt.Errorf("phraseAnchorThesisRounds must be greater than 0, got %d", c.PhraseAnchorThesisRounds)
+	}
+	if c.PhraseAnchorVotes <= 0 {
+		return fmt.Errorf("phraseAnchorVotes must be greater than 0, got %d", c.PhraseAnchorVotes)
+	}
+	if c.PhraseAnchorQuoteFilterBatchSize <= 0 {
+		return fmt.Errorf("phraseAnchorQuoteFilterBatchSize must be greater than 0, got %d", c.PhraseAnchorQuoteFilterBatchSize)
+	}
+	if c.PhraseAnchorProperFilterRuns <= 0 {
+		return fmt.Errorf("phraseAnchorProperFilterRuns must be greater than 0, got %d", c.PhraseAnchorProperFilterRuns)
+	}
+	if c.PhraseAnchorProperFilterWindowChunks <= 0 {
+		return fmt.Errorf("phraseAnchorProperFilterWindowChunks must be greater than 0, got %d", c.PhraseAnchorProperFilterWindowChunks)
 	}
 	if c.BaseURL == "" {
 		return fmt.Errorf("llama base URL is required")

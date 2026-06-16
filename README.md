@@ -107,7 +107,7 @@ Run `./focst-local --help` or `./focst-local translate --help` for the current
 translation, preprocessing, postprocessing, chunking, logging, and recovery
 options.
 
-## Local Glossary
+## Local Glossary (Experimental)
 
 `focst-local` can generate a local glossary with the same local model used for
 translation, then inject that glossary into the translation prompt. This helps
@@ -150,6 +150,35 @@ Known limits:
 - The glossary mainly improves terminology consistency, not general sentence
   translation quality.
 - Explicit `--names` mappings take priority over generated glossary entries.
+
+## Local Phrase Anchors (Experimental)
+
+`focst-local` can also generate phrase anchors with the local model. Phrase
+anchors are soft phrase-level guidance for local ambiguity, idioms, wordplay,
+callbacks, and short scene-specific expressions. They do not replace the
+glossary; glossary and `--names` mappings remain the stronger signal for names
+and stable terms.
+
+Use `--auto-phrase-anchors` to generate and apply them in one run:
+
+```bash
+./focst-local translate input.srt output.srt \
+  --source ja \
+  --target ko \
+  --auto-phrase-anchors
+```
+
+Add `--save-phrase-anchors anchors.json` to keep the generated artifact, or
+split extraction and translation when you want to inspect it first:
+
+```bash
+./focst-local phrase-anchors extract input.srt anchors.json --source ja --target ko
+./focst-local translate input.srt output.srt --source ja --target ko --phrase-anchors-file anchors.json
+```
+
+Known limits: phrase anchors are stochastic, high-cost, and experimental. They
+can improve difficult local phrasing, but wrong anchors can also hurt quality;
+save and inspect artifacts for important jobs.
 
 ## Local Runtime Flags
 

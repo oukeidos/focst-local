@@ -135,3 +135,48 @@ func TestGlossaryFlags_RejectAmbiguousAutoAndFile(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestPhraseAnchorFlags_Parse(t *testing.T) {
+	cases := [][]string{
+		{"--auto-phrase-anchors"},
+		{"--save-phrase-anchors", "out.phrase-anchors.json"},
+		{"--phrase-anchors-file", "existing.phrase-anchors.json"},
+		{"--phrase-anchors-artifacts", "out.phrase-anchors"},
+		{"--phrase-anchor-thesis-rounds", "3"},
+		{"--phrase-anchor-votes", "5"},
+		{"--phrase-anchor-quote-filter-batch-size", "80"},
+		{"--phrase-anchor-proper-filter-runs", "3"},
+		{"--phrase-anchor-proper-filter-window-chunks", "3"},
+		{"translate", "--auto-phrase-anchors"},
+		{"phrase-anchors", "extract", "--phrase-anchor-thesis-rounds", "3"},
+		{"phrase-anchors", "extract", "--phrase-anchor-votes", "5"},
+		{"phrase-anchors", "extract", "--phrase-anchors-artifacts", "artifacts"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			out, err := executeCommand(t, args...)
+			if err == nil {
+				t.Fatalf("expected command error from missing required args, got nil")
+			}
+			if strings.Contains(out, "unknown flag") {
+				t.Fatalf("expected phrase anchor flag to parse, got output: %s", out)
+			}
+		})
+	}
+}
+
+func TestPhraseAnchorFlags_RejectAmbiguousAutoAndFile(t *testing.T) {
+	_, err := executeCommand(t,
+		"translate",
+		"input.srt",
+		"output.srt",
+		"--auto-phrase-anchors",
+		"--phrase-anchors-file", "existing.phrase-anchors.json",
+	)
+	if err == nil {
+		t.Fatalf("expected ambiguous phrase anchors flag error")
+	}
+	if !strings.Contains(err.Error(), "--auto-phrase-anchors and --phrase-anchors-file cannot be used together") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/oukeidos/focst-local/internal/phraseanchor"
 )
 
 func TestRunTranslation_InvalidPaths(t *testing.T) {
@@ -131,6 +133,80 @@ func TestConfigNormalize_PreservesExplicitGlossaryValidationRuns(t *testing.T) {
 	}
 	if got.GlossaryWindowChunks != 4 {
 		t.Fatalf("GlossaryWindowChunks = %d, want 4", got.GlossaryWindowChunks)
+	}
+}
+
+func TestConfigNormalize_PhraseAnchorDefaultsUseFrozenExperimentSettings(t *testing.T) {
+	cfg := Config{}
+	got, _ := cfg.Normalize()
+	if got.PhraseAnchorThesisRounds != phraseanchor.DefaultThesisRounds {
+		t.Fatalf("PhraseAnchorThesisRounds = %d, want %d", got.PhraseAnchorThesisRounds, phraseanchor.DefaultThesisRounds)
+	}
+	if got.PhraseAnchorVotes != phraseanchor.DefaultSynthesisVotes {
+		t.Fatalf("PhraseAnchorVotes = %d, want %d", got.PhraseAnchorVotes, phraseanchor.DefaultSynthesisVotes)
+	}
+	if got.PhraseAnchorQuoteFilterBatchSize != phraseanchor.DefaultQuoteFilterBatchSize {
+		t.Fatalf("PhraseAnchorQuoteFilterBatchSize = %d, want %d", got.PhraseAnchorQuoteFilterBatchSize, phraseanchor.DefaultQuoteFilterBatchSize)
+	}
+	if got.PhraseAnchorProperFilterRuns != phraseanchor.DefaultProperFilterRuns {
+		t.Fatalf("PhraseAnchorProperFilterRuns = %d, want %d", got.PhraseAnchorProperFilterRuns, phraseanchor.DefaultProperFilterRuns)
+	}
+	if got.PhraseAnchorProperFilterWindowChunks != phraseanchor.DefaultProperFilterWindowChunks {
+		t.Fatalf("PhraseAnchorProperFilterWindowChunks = %d, want %d", got.PhraseAnchorProperFilterWindowChunks, phraseanchor.DefaultProperFilterWindowChunks)
+	}
+}
+
+func TestConfigValidate_PhraseAnchorConflicts(t *testing.T) {
+	base := Config{
+		InputPath:            "in.srt",
+		OutputPath:           "out.srt",
+		BaseURL:              "http://127.0.0.1:8080/v1",
+		Model:                "test-model",
+		ChunkSize:            10,
+		ContextSize:          0,
+		Concurrency:          1,
+		SourceLang:           "ja",
+		TargetLang:           "ko",
+		ChunkBoundaryPlanner: ChunkBoundaryPlannerOff,
+	}
+	tests := []struct {
+		name    string
+		mutate  func(*Config)
+		wantErr string
+	}{
+		{
+			name: "auto_and_file",
+			mutate: func(c *Config) {
+				c.AutoPhraseAnchors = true
+				c.PhraseAnchorsPath = "anchors.json"
+			},
+			wantErr: "--auto-phrase-anchors and --phrase-anchors-file cannot be used together",
+		},
+		{
+			name: "save_requires_auto",
+			mutate: func(c *Config) {
+				c.SavePhraseAnchorsPath = "anchors.json"
+			},
+			wantErr: "--save-phrase-anchors requires --auto-phrase-anchors",
+		},
+		{
+			name: "concurrency_requires_one",
+			mutate: func(c *Config) {
+				c.AutoPhraseAnchors = true
+				c.Concurrency = 2
+			},
+			wantErr: "phrase anchors require --concurrency 1",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := base
+			tt.mutate(&cfg)
+			cfg, _ = cfg.Normalize()
+			if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("Validate() error = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }
 

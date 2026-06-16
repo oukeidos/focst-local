@@ -13,6 +13,7 @@ import (
 	"github.com/oukeidos/focst-local/internal/localllm"
 	"github.com/oukeidos/focst-local/internal/logger"
 	"github.com/oukeidos/focst-local/internal/names"
+	"github.com/oukeidos/focst-local/internal/phraseanchor"
 	"github.com/oukeidos/focst-local/internal/recovery"
 	"github.com/oukeidos/focst-local/internal/srt"
 	"github.com/oukeidos/focst-local/internal/translation"
@@ -151,6 +152,28 @@ func RunRepair(ctx context.Context, cfg Config) (RepairResult, error) {
 	if len(finalMapping) > 0 {
 		tr.SetNamesMapping(finalMapping)
 	}
+	if runtimeLog.PhraseAnchorsPath != "" {
+		sum, err := phraseanchor.ChecksumFile(runtimeLog.PhraseAnchorsPath)
+		if err != nil {
+			return RepairResult{}, fmt.Errorf("failed to checksum phrase anchors artifact: %w", err)
+		}
+		if sum != logFile.PhraseAnchorsChecksum {
+			return RepairResult{}, fmt.Errorf("phrase anchors artifact checksum mismatch: expected %s, got %s", logFile.PhraseAnchorsChecksum, sum)
+		}
+		artifact, err := phraseanchor.LoadArtifact(runtimeLog.PhraseAnchorsPath)
+		if err != nil {
+			return RepairResult{}, err
+		}
+		if err := phraseanchor.ValidateArtifactForSegments(artifact, segments, runtimeLog.SourceLang, runtimeLog.TargetLang, segmentsChecksum); err != nil {
+			return RepairResult{}, err
+		}
+		tr.SetChunkPlan(artifact.ChunkPlan)
+		guidance := phraseGuidanceFromArtifact(artifact, finalMapping)
+		if len(guidance) > 0 {
+			tr.SetPhraseGuidance(guidance)
+		}
+		logger.Info("Loaded phrase anchors", "count", len(artifact.Entries), "injected", len(guidance), "path", runtimeLog.PhraseAnchorsPath)
+	}
 
 	// 3. Repair
 	logger.Info("Starting repair", "model", runtimeLog.Model, "failed_chunks", len(runtimeLog.FailedChunks))
@@ -250,6 +273,13 @@ func resolveRuntimeSessionLog(logPath string, logFile *recovery.SessionLog) (rec
 			return recovery.SessionLog{}, fmt.Errorf("invalid recovery log: glossary_path not found: %s", logFile.GlossaryPath)
 		}
 		runtimeLog.GlossaryPath = resolvedGlossaryPath
+	}
+	if logFile.PhraseAnchorsPath != "" {
+		resolvedPhraseAnchorsPath := recovery.ResolveInputPath(logPath, logFile.PhraseAnchorsPath)
+		if _, err := os.Stat(resolvedPhraseAnchorsPath); err != nil {
+			return recovery.SessionLog{}, fmt.Errorf("invalid recovery log: phrase_anchors_path not found: %s", logFile.PhraseAnchorsPath)
+		}
+		runtimeLog.PhraseAnchorsPath = resolvedPhraseAnchorsPath
 	}
 
 	return runtimeLog, nil

@@ -18,6 +18,7 @@ import (
 	"github.com/oukeidos/focst-local/internal/language"
 	"github.com/oukeidos/focst-local/internal/localllm"
 	"github.com/oukeidos/focst-local/internal/logger"
+	"github.com/oukeidos/focst-local/internal/phraseanchor"
 	"github.com/oukeidos/focst-local/internal/recovery"
 	"github.com/oukeidos/focst-local/internal/srt"
 	"github.com/oukeidos/focst-local/internal/translation"
@@ -78,6 +79,21 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 	}
 	if cfg.GlossaryArtifactsDir != "" {
 		if err := files.RejectSymlinkPath(cfg.GlossaryArtifactsDir); err != nil {
+			return TranslationResult{}, err
+		}
+	}
+	if cfg.PhraseAnchorsPath != "" {
+		if err := files.RejectSymlinkPath(cfg.PhraseAnchorsPath); err != nil {
+			return TranslationResult{}, err
+		}
+	}
+	if cfg.SavePhraseAnchorsPath != "" {
+		if err := files.RejectSymlinkPath(cfg.SavePhraseAnchorsPath); err != nil {
+			return TranslationResult{}, err
+		}
+	}
+	if cfg.PhraseAnchorsArtifactsDir != "" {
+		if err := files.RejectSymlinkPath(cfg.PhraseAnchorsArtifactsDir); err != nil {
 			return TranslationResult{}, err
 		}
 	}
@@ -152,6 +168,21 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 		boundaryPlanner = client
 	}
 	tr.SetChunkPlanning(cfg.ChunkPlanOptions(), boundaryPlanner)
+	var planned chunker.ChunkPlan
+	plannedReady := false
+	ensureChunkPlan := func(purpose string) (chunker.ChunkPlan, error) {
+		if plannedReady {
+			return planned, nil
+		}
+		_, plan, err := chunker.PlanChunks(ctx, segments, cfg.ChunkPlanOptions(), boundaryPlanner)
+		if err != nil {
+			return chunker.ChunkPlan{}, fmt.Errorf("failed to plan chunks for %s: %w", purpose, err)
+		}
+		planned = plan
+		plannedReady = true
+		tr.SetChunkPlan(planned)
+		return planned, nil
+	}
 	glossaryMapping := map[string]string(nil)
 	effectiveGlossaryPath := cfg.GlossaryPath
 	glossaryChecksum := ""
@@ -161,9 +192,9 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 		if err := confirmGeneratedGlossaryOverwrite(cfg); err != nil {
 			return TranslationResult{}, err
 		}
-		_, planned, err := chunker.PlanChunks(ctx, segments, cfg.ChunkPlanOptions(), boundaryPlanner)
+		planned, err := ensureChunkPlan("glossary extraction")
 		if err != nil {
-			return TranslationResult{}, fmt.Errorf("failed to plan chunks for glossary extraction: %w", err)
+			return TranslationResult{}, err
 		}
 		artifact, usage, err := extractGlossaryWithClient(ctx, cfg, client, segments, planned, srcLang, tgtLang)
 		if err != nil {
@@ -183,7 +214,6 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 			effectiveGlossaryPath = cfg.SaveGlossaryPath
 			glossaryChecksum = checksum
 		}
-		tr.SetChunkPlan(planned)
 		logger.Info("Generated local glossary",
 			"event", "glossary_generated",
 			"saved", cfg.SaveGlossaryPath != "",
@@ -217,6 +247,81 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 		tr.SetNamesMapping(finalMapping)
 		logger.Info("Loaded translation mapping", "count", len(finalMapping), "glossary_entries", len(glossaryMapping), "names_entries", len(cfg.NamesMapping), "glossary_overrides", glossaryOverrideCount)
 	}
+	effectivePhraseAnchorsPath := cfg.PhraseAnchorsPath
+	phraseAnchorsChecksum := ""
+	phraseAnchorsPromptVersion := ""
+	phraseAnchorsEntryCount := 0
+	var phraseAnchorsUsage translation.UsageMetadata
+	if cfg.AutoPhraseAnchors {
+		if err := confirmGeneratedPhraseAnchorsOverwrite(cfg); err != nil {
+			return TranslationResult{}, err
+		}
+		planned, err := ensureChunkPlan("phrase anchor extraction")
+		if err != nil {
+			return TranslationResult{}, err
+		}
+		artifact, usage, err := extractPhraseAnchorsWithClient(ctx, cfg, client, segments, planned, srcLang, tgtLang)
+		if err != nil {
+			return TranslationResult{}, err
+		}
+		if err := phraseanchor.ValidateArtifactForSegments(artifact, segments, srcLang.Code, tgtLang.Code, srt.SegmentsChecksumHex(segments)); err != nil {
+			return TranslationResult{}, err
+		}
+		phraseAnchorsUsage = usage
+		phraseAnchorsPromptVersion = artifact.PromptVersion
+		phraseAnchorsEntryCount = len(artifact.Entries)
+		if cfg.SavePhraseAnchorsPath != "" {
+			if err := phraseanchor.SaveArtifact(cfg.SavePhraseAnchorsPath, artifact); err != nil {
+				return TranslationResult{}, err
+			}
+			checksum, err := phraseanchor.ChecksumFile(cfg.SavePhraseAnchorsPath)
+			if err != nil {
+				return TranslationResult{}, fmt.Errorf("failed to checksum generated phrase anchors: %w", err)
+			}
+			effectivePhraseAnchorsPath = cfg.SavePhraseAnchorsPath
+			phraseAnchorsChecksum = checksum
+		}
+		guidance := phraseGuidanceFromArtifact(artifact, finalMapping)
+		if len(guidance) > 0 {
+			tr.SetPhraseGuidance(guidance)
+		}
+		logger.Info("Generated phrase anchors",
+			"event", "phrase_anchors_generated",
+			"saved", cfg.SavePhraseAnchorsPath != "",
+			"path", effectivePhraseAnchorsPath,
+			"entries", len(artifact.Entries),
+			"injected", len(guidance),
+			"rejected", artifact.RejectedCount,
+			"checksum", phraseAnchorsChecksum,
+		)
+	} else if cfg.PhraseAnchorsPath != "" {
+		artifact, err := phraseanchor.LoadArtifact(cfg.PhraseAnchorsPath)
+		if err != nil {
+			return TranslationResult{}, err
+		}
+		if err := phraseanchor.ValidateArtifactForSegments(artifact, segments, srcLang.Code, tgtLang.Code, srt.SegmentsChecksumHex(segments)); err != nil {
+			return TranslationResult{}, err
+		}
+		checksum, err := phraseanchor.ChecksumFile(cfg.PhraseAnchorsPath)
+		if err != nil {
+			return TranslationResult{}, fmt.Errorf("failed to checksum phrase anchors: %w", err)
+		}
+		phraseAnchorsChecksum = checksum
+		phraseAnchorsPromptVersion = artifact.PromptVersion
+		phraseAnchorsEntryCount = len(artifact.Entries)
+		tr.SetChunkPlan(artifact.ChunkPlan)
+		guidance := phraseGuidanceFromArtifact(artifact, finalMapping)
+		if len(guidance) > 0 {
+			tr.SetPhraseGuidance(guidance)
+		}
+		logger.Info("Loaded phrase anchors",
+			"event", "phrase_anchors_loaded",
+			"path", cfg.PhraseAnchorsPath,
+			"entries", len(artifact.Entries),
+			"injected", len(guidance),
+			"checksum", checksum,
+		)
+	}
 
 	// 4. Translate
 	logger.Info("Starting translation",
@@ -231,7 +336,7 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 	)
 	translated, failed, err := tr.TranslateSRT(ctx, segments, cfg.OnProgress)
 	if err != nil {
-		return TranslationResult{Usage: addUsage(glossaryUsage, tr.GetUsage())}, fmt.Errorf("fatal translation error: %w", err)
+		return TranslationResult{Usage: addUsage(addUsage(glossaryUsage, phraseAnchorsUsage), tr.GetUsage())}, fmt.Errorf("fatal translation error: %w", err)
 	}
 
 	// 5. Handle Results
@@ -243,7 +348,7 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 	status := translationStatusFromRecovery(recovery.CalculateStatus(len(failed), totalChunks))
 	result := TranslationResult{
 		Status:       status,
-		Usage:        addUsage(glossaryUsage, tr.GetUsage()),
+		Usage:        addUsage(addUsage(glossaryUsage, phraseAnchorsUsage), tr.GetUsage()),
 		FailedChunks: len(failed),
 		TotalChunks:  totalChunks,
 	}
@@ -315,45 +420,56 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 				return result, fmt.Errorf("failed to convert glossary path to relative: %w", err)
 			}
 		}
+		relativePhraseAnchorsPath := ""
+		if effectivePhraseAnchorsPath != "" {
+			relativePhraseAnchorsPath, err = recovery.ToRelativeInputPath(logPath, effectivePhraseAnchorsPath)
+			if err != nil {
+				return result, fmt.Errorf("failed to convert phrase anchors path to relative: %w", err)
+			}
+		}
 
 		session := &recovery.SessionLog{
-			LogVersion:            recovery.CurrentLogVersion,
-			InputPath:             relativeInputPath,
-			OutputPath:            relativeOutputPath,
-			InputHash:             inputHash,
-			SegmentsChecksum:      segmentsChecksum,
-			Model:                 cfg.Model,
-			Provider:              "llama.cpp",
-			BaseURL:               cfg.BaseURL,
-			LlamaServerMode:       string(server.Config.Mode),
-			LlamaServerBin:        server.Config.ServerBin,
-			LlamaModelPath:        server.Config.ModelPath,
-			LlamaCtxSize:          server.Config.CtxSize,
-			LlamaParallel:         server.Config.Parallel,
-			LlamaExtraArgs:        append([]string(nil), server.Config.ExtraArgs...),
-			LlamaLogFile:          server.LogFile,
-			MaxTokens:             cfg.MaxTokens,
-			NamesPath:             relativeNamesPath,
-			GlossaryPath:          relativeGlossaryPath,
-			GlossaryChecksum:      glossaryChecksum,
-			GlossaryPromptVersion: glossaryPromptVersion,
-			GlossaryOverrideCount: glossaryOverrideCount,
-			ChunkSize:             cfg.ChunkSize,
-			ContextSize:           cfg.ContextSize,
-			SentenceAwareChunks:   cfg.SentenceAwareChunks,
-			MinChunkSize:          cfg.MinChunkSize,
-			MaxChunkSize:          cfg.MaxChunkSize,
-			ChunkBoundaryPlanner:  cfg.ChunkBoundaryPlanner,
-			Concurrency:           cfg.Concurrency,
-			NoPreprocess:          cfg.NoPreprocess,
-			NoPostprocess:         cfg.NoPostprocess,
-			NoLangPreprocess:      cfg.NoLangPreprocess,
-			NoLangPostprocess:     cfg.NoLangPostprocess,
-			SourceLang:            srcLang.Code,
-			TargetLang:            tgtLang.Code,
-			FailedChunks:          failed,
-			TotalChunks:           totalChunks,
-			Status:                string(status),
+			LogVersion:                 recovery.CurrentLogVersion,
+			InputPath:                  relativeInputPath,
+			OutputPath:                 relativeOutputPath,
+			InputHash:                  inputHash,
+			SegmentsChecksum:           segmentsChecksum,
+			Model:                      cfg.Model,
+			Provider:                   "llama.cpp",
+			BaseURL:                    cfg.BaseURL,
+			LlamaServerMode:            string(server.Config.Mode),
+			LlamaServerBin:             server.Config.ServerBin,
+			LlamaModelPath:             server.Config.ModelPath,
+			LlamaCtxSize:               server.Config.CtxSize,
+			LlamaParallel:              server.Config.Parallel,
+			LlamaExtraArgs:             append([]string(nil), server.Config.ExtraArgs...),
+			LlamaLogFile:               server.LogFile,
+			MaxTokens:                  cfg.MaxTokens,
+			NamesPath:                  relativeNamesPath,
+			GlossaryPath:               relativeGlossaryPath,
+			GlossaryChecksum:           glossaryChecksum,
+			GlossaryPromptVersion:      glossaryPromptVersion,
+			GlossaryOverrideCount:      glossaryOverrideCount,
+			PhraseAnchorsPath:          relativePhraseAnchorsPath,
+			PhraseAnchorsChecksum:      phraseAnchorsChecksum,
+			PhraseAnchorsPromptVersion: phraseAnchorsPromptVersion,
+			PhraseAnchorsEntryCount:    phraseAnchorsEntryCount,
+			ChunkSize:                  cfg.ChunkSize,
+			ContextSize:                cfg.ContextSize,
+			SentenceAwareChunks:        cfg.SentenceAwareChunks,
+			MinChunkSize:               cfg.MinChunkSize,
+			MaxChunkSize:               cfg.MaxChunkSize,
+			ChunkBoundaryPlanner:       cfg.ChunkBoundaryPlanner,
+			Concurrency:                cfg.Concurrency,
+			NoPreprocess:               cfg.NoPreprocess,
+			NoPostprocess:              cfg.NoPostprocess,
+			NoLangPreprocess:           cfg.NoLangPreprocess,
+			NoLangPostprocess:          cfg.NoLangPostprocess,
+			SourceLang:                 srcLang.Code,
+			TargetLang:                 tgtLang.Code,
+			FailedChunks:               failed,
+			TotalChunks:                totalChunks,
+			Status:                     string(status),
 		}
 		if len(chunkPlan.Chunks) > 0 {
 			session.ChunkPlan = &chunkPlan
@@ -466,6 +582,25 @@ func confirmGeneratedGlossaryOverwrite(cfg Config) error {
 		return nil
 	} else if !os.IsNotExist(err) {
 		return fmt.Errorf("failed to stat glossary output path: %w", err)
+	}
+	return nil
+}
+
+func confirmGeneratedPhraseAnchorsOverwrite(cfg Config) error {
+	if cfg.SavePhraseAnchorsPath == "" {
+		return nil
+	}
+	if _, err := os.Stat(cfg.SavePhraseAnchorsPath); err == nil {
+		overwrite := cfg.Overwrite
+		if cfg.OnConfirmOverwrite != nil {
+			overwrite = cfg.OnConfirmOverwrite(cfg.SavePhraseAnchorsPath)
+		}
+		if !overwrite {
+			return fmt.Errorf("phrase anchors output exists: %s", cfg.SavePhraseAnchorsPath)
+		}
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("failed to stat phrase anchors output path: %w", err)
 	}
 	return nil
 }

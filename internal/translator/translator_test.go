@@ -221,6 +221,45 @@ func TestTranslator_TranslateChunksUsesSavedVariableChunkPlan(t *testing.T) {
 	}
 }
 
+func TestTranslator_PhraseGuidancePromptIsScopedToChunkTargets(t *testing.T) {
+	client := &perRequestMockClient{}
+	src, _ := language.GetLanguage("ja")
+	tgt, _ := language.GetLanguage("ko")
+	tr, err := NewTranslator(client, 2, 0, 1, src, tgt)
+	if err != nil {
+		t.Fatalf("NewTranslator failed: %v", err)
+	}
+	tr.SetPhraseGuidance([]PhraseGuidance{
+		{SegmentID: 1, SourceQuote: "ついてます", Rendering: "붙어 있어요"},
+		{SegmentID: 3, SourceQuote: "対象外", Rendering: "제외"},
+	})
+	prompt := tr.systemPromptForChunk(chunker.Chunk{Target: []srt.Segment{
+		{ID: 1, Lines: []string{"ついてます"}},
+		{ID: 2, Lines: []string{"別行"}},
+	}})
+	if !strings.Contains(prompt, "Local Phrase Guidance") || !strings.Contains(prompt, "ついてます") || !strings.Contains(prompt, "붙어 있어요") {
+		t.Fatalf("expected prompt to include target phrase guidance, got:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "対象外") || strings.Contains(prompt, "제외") {
+		t.Fatalf("expected prompt to exclude non-target phrase guidance, got:\n%s", prompt)
+	}
+}
+
+func TestTranslator_PhraseGuidanceRequiresSingleConcurrency(t *testing.T) {
+	client := &perRequestMockClient{}
+	src, _ := language.GetLanguage("ja")
+	tgt, _ := language.GetLanguage("ko")
+	tr, err := NewTranslator(client, 1, 0, 2, src, tgt)
+	if err != nil {
+		t.Fatalf("NewTranslator failed: %v", err)
+	}
+	tr.SetPhraseGuidance([]PhraseGuidance{{SegmentID: 1, SourceQuote: "ついてます", Rendering: "붙어 있어요"}})
+	_, _, err = tr.TranslateSRT(context.Background(), []srt.Segment{{ID: 1, Lines: []string{"ついてます"}}}, nil)
+	if err == nil || !strings.Contains(err.Error(), "phrase anchors require concurrency=1") {
+		t.Fatalf("expected phrase anchors concurrency error, got %v", err)
+	}
+}
+
 type perRequestMockClient struct {
 	translation.Translator
 }

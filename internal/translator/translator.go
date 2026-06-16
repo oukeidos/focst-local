@@ -73,19 +73,29 @@ Translate the provided %s subtitle segments into %s.
 
 // Translator orchestrates the translation process.
 type Translator struct {
-	client       translation.Translator
-	chunkSize    int
-	contextSize  int
-	concurrency  int
-	planOptions  chunker.PlanOptions
-	planner      chunker.BoundaryPlanner
-	savedPlan    *chunker.ChunkPlan
-	lastPlan     chunker.ChunkPlan
-	usage        translation.UsageMetadata
-	usageMu      sync.Mutex
-	namesMapping map[string]string
-	srcLang      language.Language
-	tgtLang      language.Language
+	client             translation.Translator
+	chunkSize          int
+	contextSize        int
+	concurrency        int
+	planOptions        chunker.PlanOptions
+	planner            chunker.BoundaryPlanner
+	savedPlan          *chunker.ChunkPlan
+	lastPlan           chunker.ChunkPlan
+	usage              translation.UsageMetadata
+	usageMu            sync.Mutex
+	namesMapping       map[string]string
+	phraseGuidanceByID map[int][]PhraseGuidance
+	srcLang            language.Language
+	tgtLang            language.Language
+}
+
+// PhraseGuidance is an optional soft hint for one source phrase in one target segment.
+type PhraseGuidance struct {
+	SegmentID   int
+	SourceText  string
+	Type        string
+	SourceQuote string
+	Rendering   string
 }
 
 // NewTranslator creates a new Translator instance.
@@ -141,6 +151,18 @@ func (t *Translator) SetNamesMapping(mapping map[string]string) {
 	t.namesMapping = mapping
 }
 
+// SetPhraseGuidance sets optional phrase-level hints keyed by target segment ID.
+func (t *Translator) SetPhraseGuidance(guidance []PhraseGuidance) {
+	byID := map[int][]PhraseGuidance{}
+	for _, item := range guidance {
+		if item.SegmentID <= 0 || strings.TrimSpace(item.SourceQuote) == "" || strings.TrimSpace(item.Rendering) == "" {
+			continue
+		}
+		byID[item.SegmentID] = append(byID[item.SegmentID], item)
+	}
+	t.phraseGuidanceByID = byID
+}
+
 // TranslationState represents the current state of a chunk translation.
 type TranslationState int
 
@@ -165,7 +187,7 @@ type TranslationProgress struct {
 	Usage       translation.UsageMetadata
 }
 
-func (t *Translator) setSystemInstruction() {
+func (t *Translator) baseSystemPrompt() string {
 	prompt := GetSystemPrompt(t.srcLang.Name, t.tgtLang.Name)
 
 	// Inject Names Mapping if present
@@ -182,18 +204,78 @@ func (t *Translator) setSystemInstruction() {
 		}
 		prompt += mappingStr
 	}
+	return prompt
+}
 
+func (t *Translator) setSystemInstruction(prompt string) {
 	if sc, ok := t.client.(interface{ SetSystemInstruction(string) }); ok {
 		sc.SetSystemInstruction(prompt)
 	}
 }
 
+func (t *Translator) systemPromptForChunk(chunk chunker.Chunk) string {
+	prompt := t.baseSystemPrompt()
+	if len(t.phraseGuidanceByID) == 0 {
+		return prompt
+	}
+
+	targetIDs := map[int]bool{}
+	for _, seg := range chunk.Target {
+		targetIDs[seg.ID] = true
+	}
+	var rows []PhraseGuidance
+	for id := range targetIDs {
+		rows = append(rows, t.phraseGuidanceByID[id]...)
+	}
+	if len(rows) == 0 {
+		return prompt
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].SegmentID != rows[j].SegmentID {
+			return rows[i].SegmentID < rows[j].SegmentID
+		}
+		if rows[i].SourceQuote != rows[j].SourceQuote {
+			return rows[i].SourceQuote < rows[j].SourceQuote
+		}
+		return rows[i].Rendering < rows[j].Rendering
+	})
+
+	var b strings.Builder
+	b.WriteString(prompt)
+	b.WriteString("\n\n4. Local Phrase Guidance:\n")
+	b.WriteString("- The following phrase decisions apply only to target IDs in this request.\n")
+	b.WriteString("- Treat them as soft guidance for local phrasing, not mandatory replacements.\n")
+	b.WriteString("- Apply a hint only when the listed source quote appears in that same target segment.\n")
+	b.WriteString("- Preserve the full meaning of each source_text and the one-output-object-per-ID contract above.\n\n")
+	b.WriteString("| ID | Source quote | Suggested ")
+	b.WriteString(t.tgtLang.Name)
+	b.WriteString(" rendering |\n")
+	b.WriteString("| ---: | --- | --- |\n")
+	for _, row := range rows {
+		b.WriteString(fmt.Sprintf("| %d | %s | %s |\n",
+			row.SegmentID,
+			escapeMarkdownCell(row.SourceQuote),
+			escapeMarkdownCell(row.Rendering),
+		))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func escapeMarkdownCell(value string) string {
+	value = strings.ReplaceAll(value, "\n", " ")
+	value = strings.ReplaceAll(value, "|", "\\|")
+	return strings.TrimSpace(value)
+}
+
 func (t *Translator) translateEngine(ctx context.Context, segments []srt.Segment, chunkIndices []int, onProgress func(TranslationProgress)) ([]chunker.Chunk, [][]srt.Segment, []bool, error) {
-	t.setSystemInstruction()
+	t.setSystemInstruction(t.baseSystemPrompt())
 
 	chunks, plan, err := t.planChunks(ctx, segments)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+	if len(t.phraseGuidanceByID) > 0 && t.concurrency != 1 {
+		return nil, nil, nil, fmt.Errorf("phrase anchors require concurrency=1 to avoid per-chunk prompt mixing, got %d", t.concurrency)
 	}
 	t.lastPlan = plan
 	translatedChunks := make([][]srt.Segment, len(chunks))
@@ -277,6 +359,7 @@ func (t *Translator) translateEngine(ctx context.Context, segments []srt.Segment
 					}
 
 					req := t.prepareRequest(chunk)
+					t.setSystemInstruction(t.systemPromptForChunk(chunk))
 					attemptStarted := time.Now()
 					resp, err = t.client.Translate(ctx, req)
 					if err == nil {
