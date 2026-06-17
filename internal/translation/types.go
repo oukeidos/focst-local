@@ -46,10 +46,24 @@ type TextCompletion struct {
 	Usage   UsageMetadata
 }
 
+// TextCompletionOptions controls plain text helper requests.
+type TextCompletionOptions struct {
+	MaxTokens   int
+	Temperature float64
+	TopP        float64
+	TopK        int
+}
+
 // TextCompleter is implemented by local chat-completion backends that can
 // return plain text without structured JSON schema forcing.
 type TextCompleter interface {
 	CompleteText(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (*TextCompletion, error)
+}
+
+// TextCompleterWithOptions is implemented by backends that support explicit
+// sampler settings for plain text helper requests.
+type TextCompleterWithOptions interface {
+	CompleteTextWithOptions(ctx context.Context, systemPrompt, userPrompt string, opts TextCompletionOptions) (*TextCompletion, error)
 }
 
 // SourceTextFromLines normalizes one subtitle segment into the single text

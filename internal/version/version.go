@@ -4,8 +4,8 @@ import "fmt"
 
 // Version is the release version embedded in the binary.
 // It can be overridden at build time via:
-// go build -ldflags "-X github.com/oukeidos/focst-local/internal/version.Version=0.3.0"
-var Version = "0.3.0"
+// go build -ldflags "-X github.com/oukeidos/focst-local/internal/version.Version=0.3.1"
+var Version = "0.3.1"
 
 // Commit is the git commit hash embedded in the binary.
 // It can be overridden at build time via:

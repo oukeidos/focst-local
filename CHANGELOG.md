@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.3.1] - 2026-06-17
+- Added glossary rendering safety filtering.
+
 ## [0.3.0] - 2026-06-17
 - Added local phrase anchors.
 

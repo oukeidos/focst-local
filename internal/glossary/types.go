@@ -13,6 +13,14 @@ const (
 	DefaultWindowChunks = 3
 	DefaultMaxTokens    = 8192
 
+	RenderingSafetyFilterVersion       = "local-glossary-rendering-safety-v1"
+	RenderingSafetyFilterSystemPrompt  = "You review subtitle glossary entries."
+	DefaultRenderingSafetyBatchSize    = 20
+	DefaultRenderingSafetySnippetLimit = 4
+	DefaultRenderingSafetyTemperature  = 0.0
+	DefaultRenderingSafetyTopP         = 0.95
+	DefaultRenderingSafetyTopK         = 64
+
 	ConfidenceHigh   = "high"
 	ConfidenceMedium = "medium"
 	ConfidenceLow    = "low"
@@ -60,15 +68,16 @@ type Entry struct {
 
 // Artifact is the reusable generated glossary file consumed by translation.
 type Artifact struct {
-	Version       int       `json:"version"`
-	PromptVersion string    `json:"prompt_version"`
-	SourceLang    string    `json:"source_language"`
-	TargetLang    string    `json:"target_language"`
-	CreatedAt     time.Time `json:"created_at"`
-	Input         InputInfo `json:"input"`
-	Config        RunConfig `json:"config"`
-	Entries       []Entry   `json:"entries"`
-	RejectedCount int       `json:"rejected_count"`
+	Version               int                        `json:"version"`
+	PromptVersion         string                     `json:"prompt_version"`
+	SourceLang            string                     `json:"source_language"`
+	TargetLang            string                     `json:"target_language"`
+	CreatedAt             time.Time                  `json:"created_at"`
+	Input                 InputInfo                  `json:"input"`
+	Config                RunConfig                  `json:"config"`
+	RenderingSafetyFilter *RenderingSafetyFilterInfo `json:"rendering_safety_filter,omitempty"`
+	Entries               []Entry                    `json:"entries"`
+	RejectedCount         int                        `json:"rejected_count"`
 }
 
 type InputInfo struct {
@@ -106,4 +115,23 @@ type RunRecord struct {
 	Parsed      []Candidate               `json:"parsed"`
 	Rejected    []RejectedCandidate       `json:"rejected"`
 	Violations  []string                  `json:"violations,omitempty"`
+}
+
+type RenderingSafetyFilterInfo struct {
+	Version            string `json:"version"`
+	Applied            bool   `json:"applied"`
+	SourceEntryCount   int    `json:"source_entry_count"`
+	FilteredEntryCount int    `json:"filtered_entry_count"`
+	DroppedCount       int    `json:"dropped_count"`
+}
+
+type RenderingSafetyJudgment struct {
+	Row                int    `json:"row"`
+	Source             string `json:"source"`
+	Rendering          string `json:"rendering"`
+	ExpectedStrategy   string `json:"expected_strategy"`
+	Fit                string `json:"fit"`
+	Decision           string `json:"decision"`
+	SourcePolicyResult string `json:"source_policy_result"`
+	SourcePolicyReason string `json:"source_policy_reason"`
 }

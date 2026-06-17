@@ -179,6 +179,50 @@ func TestClient_CompleteTextUsesTextResponseFormat(t *testing.T) {
 	}
 }
 
+func TestClient_CompleteTextWithOptionsPreservesZeroTemperature(t *testing.T) {
+	var got chatCompletionRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("failed to decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices": [{"message": {"role": "assistant", "content": "| Row | Expected strategy | Fit | Decision |\n| --- | --- | --- | --- |"}}],
+			"usage": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18}
+		}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL+"/v1", "test-model")
+	_, err := client.CompleteTextWithOptions(context.Background(), "system", "user", translation.TextCompletionOptions{
+		MaxTokens:   2048,
+		Temperature: 0.0,
+		TopP:        0.95,
+		TopK:        64,
+	})
+	if err != nil {
+		t.Fatalf("CompleteTextWithOptions failed: %v", err)
+	}
+	if got.Temperature != 0.0 {
+		t.Fatalf("temperature = %v, want 0.0", got.Temperature)
+	}
+	if got.TopP != 0.95 {
+		t.Fatalf("top_p = %v, want 0.95", got.TopP)
+	}
+	if got.TopK != 64 {
+		t.Fatalf("top_k = %v, want 64", got.TopK)
+	}
+	if got.MaxTokens != 2048 {
+		t.Fatalf("max_tokens = %d, want 2048", got.MaxTokens)
+	}
+	if got.ResponseFormat.Type != "text" {
+		t.Fatalf("response format = %q, want text", got.ResponseFormat.Type)
+	}
+}
+
 func TestClient_CompleteTextChatWithSamplerOmitsResponseFormat(t *testing.T) {
 	var got map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

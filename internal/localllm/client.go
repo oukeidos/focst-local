@@ -166,8 +166,31 @@ func (c *Client) Translate(ctx context.Context, request translation.RequestData)
 // forcing. It is used for local helper passes where experiments showed that
 // plaintext Markdown is more reliable than structured JSON.
 func (c *Client) CompleteText(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (*translation.TextCompletion, error) {
+	return c.CompleteTextWithOptions(ctx, systemPrompt, userPrompt, translation.TextCompletionOptions{
+		MaxTokens:   maxTokens,
+		Temperature: DefaultTemperature,
+		TopP:        DefaultTopP,
+		TopK:        DefaultTopK,
+	})
+}
+
+// CompleteTextWithOptions sends a plain text chat-completion request with
+// explicit sampler settings.
+func (c *Client) CompleteTextWithOptions(ctx context.Context, systemPrompt, userPrompt string, opts translation.TextCompletionOptions) (*translation.TextCompletion, error) {
+	maxTokens := opts.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = c.maxTokens
+	}
+	if maxTokens <= 0 {
+		maxTokens = DefaultMaxTokens
+	}
+	topP := opts.TopP
+	if topP == 0 {
+		topP = DefaultTopP
+	}
+	topK := opts.TopK
+	if topK == 0 {
+		topK = DefaultTopK
 	}
 	payload := chatCompletionRequest{
 		Model: c.model,
@@ -175,9 +198,9 @@ func (c *Client) CompleteText(ctx context.Context, systemPrompt, userPrompt stri
 			{Role: "system", Content: systemPrompt},
 			{Role: "user", Content: userPrompt},
 		},
-		Temperature: DefaultTemperature,
-		TopP:        DefaultTopP,
-		TopK:        DefaultTopK,
+		Temperature: opts.Temperature,
+		TopP:        topP,
+		TopK:        topK,
 		MaxTokens:   maxTokens,
 		ResponseFormat: responseFormat{
 			Type: "text",
@@ -422,4 +445,5 @@ type chatCompletionResponse struct {
 
 var _ translation.Translator = (*Client)(nil)
 var _ translation.TextCompleter = (*Client)(nil)
+var _ translation.TextCompleterWithOptions = (*Client)(nil)
 var _ chunker.BoundaryPlanner = (*Client)(nil)

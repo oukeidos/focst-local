@@ -13,12 +13,27 @@ import (
 )
 
 type fakeTextCompleter struct {
-	content string
-	usage   translation.UsageMetadata
+	responses []translation.TextCompletion
+	options   []translation.TextCompletionOptions
 }
 
-func (f fakeTextCompleter) CompleteText(context.Context, string, string, int) (*translation.TextCompletion, error) {
-	return &translation.TextCompletion{Content: f.content, Usage: f.usage}, nil
+func (f *fakeTextCompleter) CompleteText(_ context.Context, _, _ string, _ int) (*translation.TextCompletion, error) {
+	if len(f.responses) == 0 {
+		return &translation.TextCompletion{}, nil
+	}
+	resp := f.responses[0]
+	f.responses = f.responses[1:]
+	return &resp, nil
+}
+
+func (f *fakeTextCompleter) CompleteTextWithOptions(_ context.Context, _, _ string, opts translation.TextCompletionOptions) (*translation.TextCompletion, error) {
+	f.options = append(f.options, opts)
+	if len(f.responses) == 0 {
+		return &translation.TextCompletion{}, nil
+	}
+	resp := f.responses[0]
+	f.responses = f.responses[1:]
+	return &resp, nil
 }
 
 func TestExtractWritesDebugArtifacts(t *testing.T) {
@@ -32,10 +47,17 @@ func TestExtractWritesDebugArtifacts(t *testing.T) {
 		{Index: 0, StartIndex: 0, EndIndex: 2, StartID: 1, EndID: 2},
 	}}
 	dir := t.TempDir()
-	artifact, usage, err := Extract(context.Background(), fakeTextCompleter{
-		content: "| Source | Korean rendering |\n| --- | --- |\n| 架空田一郎 | 가공다 이치로 |\n",
-		usage:   translation.UsageMetadata{PromptTokenCount: 5, CandidatesTokenCount: 7, TotalTokenCount: 12},
-	}, segments, plan, ExtractConfig{
+	completer := &fakeTextCompleter{responses: []translation.TextCompletion{
+		{
+			Content: "| Source | Korean rendering |\n| --- | --- |\n| 架空田一郎 | 가공다 이치로 |\n",
+			Usage:   translation.UsageMetadata{PromptTokenCount: 5, CandidatesTokenCount: 7, TotalTokenCount: 12},
+		},
+		{
+			Content: "| Row | Expected strategy | Fit | Decision |\n| ---: | --- | --- | --- |\n| 1 | name_form | fits | keep |\n",
+			Usage:   translation.UsageMetadata{PromptTokenCount: 3, CandidatesTokenCount: 4, TotalTokenCount: 7},
+		},
+	}}
+	artifact, usage, err := Extract(context.Background(), completer, segments, plan, ExtractConfig{
 		InputPath:        "synthetic.srt",
 		SegmentsChecksum: "sha256:test",
 		SourceLang:       src,
@@ -50,18 +72,34 @@ func TestExtractWritesDebugArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Extract failed: %v", err)
 	}
-	if usage.TotalTokenCount != 12 {
+	if usage.TotalTokenCount != 19 {
 		t.Fatalf("usage = %+v", usage)
 	}
 	if len(artifact.Entries) != 1 || artifact.Entries[0].Source != "架空田一郎" {
 		t.Fatalf("entries = %+v", artifact.Entries)
 	}
+	if artifact.RenderingSafetyFilter == nil || !artifact.RenderingSafetyFilter.Applied {
+		t.Fatalf("rendering safety filter info missing: %+v", artifact.RenderingSafetyFilter)
+	}
+	if len(completer.options) != 1 {
+		t.Fatalf("filter option calls = %d, want 1", len(completer.options))
+	}
+	if completer.options[0].Temperature != DefaultRenderingSafetyTemperature {
+		t.Fatalf("filter temperature = %v, want %v", completer.options[0].Temperature, DefaultRenderingSafetyTemperature)
+	}
 	for _, rel := range []string{
 		"glossary_config.json",
 		"chunk_plan.json",
 		"windows.json",
+		"merged_glossary.prefilter.json",
 		"merged_glossary.json",
 		"names_compatible.json",
+		"rendering_safety_filter/batch_001_prompt.txt",
+		"rendering_safety_filter/batch_001_response.md",
+		"rendering_safety_filter/batch_001_judgments.json",
+		"rendering_safety_filter/batch_001_usage.json",
+		"rendering_safety_filter/judgments.json",
+		"rendering_safety_filter/filtered_glossary.json",
 		"window_000/run_001_prompt.txt",
 		"window_000/run_001_response.md",
 		"window_000/run_001_parsed.json",

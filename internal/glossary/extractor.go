@@ -47,18 +47,23 @@ func Extract(ctx context.Context, completer translation.TextCompleter, segments 
 			return Artifact{}, translation.UsageMetadata{}, fmt.Errorf("failed to create glossary artifacts dir: %w", err)
 		}
 		if err := WriteJSON(filepath.Join(cfg.ArtifactDir, "glossary_config.json"), map[string]any{
-			"prompt_version":         PromptVersion,
-			"source_language":        cfg.SourceLang.Code,
-			"target_language":        cfg.TargetLang.Code,
-			"model":                  cfg.Model,
-			"base_url":               cfg.BaseURL,
-			"temperature":            1,
-			"top_p":                  0.95,
-			"top_k":                  64,
-			"max_tokens":             cfg.MaxTokens,
-			"glossary_runs":          cfg.Runs,
-			"glossary_window_chunks": cfg.WindowChunks,
-			"response_format":        "text",
+			"prompt_version":                      PromptVersion,
+			"source_language":                     cfg.SourceLang.Code,
+			"target_language":                     cfg.TargetLang.Code,
+			"model":                               cfg.Model,
+			"base_url":                            cfg.BaseURL,
+			"temperature":                         1,
+			"top_p":                               0.95,
+			"top_k":                               64,
+			"max_tokens":                          cfg.MaxTokens,
+			"glossary_runs":                       cfg.Runs,
+			"glossary_window_chunks":              cfg.WindowChunks,
+			"response_format":                     "text",
+			"rendering_safety_filter_version":     RenderingSafetyFilterVersion,
+			"rendering_safety_filter_enabled":     true,
+			"rendering_safety_filter_temperature": DefaultRenderingSafetyTemperature,
+			"rendering_safety_filter_top_p":       DefaultRenderingSafetyTopP,
+			"rendering_safety_filter_top_k":       DefaultRenderingSafetyTopK,
 		}); err != nil {
 			return Artifact{}, translation.UsageMetadata{}, fmt.Errorf("failed to write glossary config: %w", err)
 		}
@@ -153,12 +158,56 @@ func Extract(ctx context.Context, completer translation.TextCompleter, segments 
 	}
 
 	entries := Merge(accepted, allSegments)
+	createdAt := time.Now().UTC()
+	if cfg.ArtifactDir != "" {
+		prefilter := Artifact{
+			Version:       1,
+			PromptVersion: PromptVersion,
+			SourceLang:    cfg.SourceLang.Code,
+			TargetLang:    cfg.TargetLang.Code,
+			CreatedAt:     createdAt,
+			Input: InputInfo{
+				Path:                     cfg.InputPath,
+				PreprocessedSegmentCount: len(segments),
+				SegmentsChecksum:         cfg.SegmentsChecksum,
+			},
+			Config: RunConfig{
+				Model:                cfg.Model,
+				BaseURL:              cfg.BaseURL,
+				Temperature:          1,
+				TopP:                 0.95,
+				TopK:                 64,
+				MaxTokens:            cfg.MaxTokens,
+				GlossaryRuns:         cfg.Runs,
+				GlossaryWindowChunks: cfg.WindowChunks,
+			},
+			Entries:       entries,
+			RejectedCount: len(allRejected),
+		}
+		if err := WriteJSON(filepath.Join(cfg.ArtifactDir, "merged_glossary.prefilter.json"), prefilter); err != nil {
+			return Artifact{}, usage, fmt.Errorf("failed to write prefilter glossary debug artifact: %w", err)
+		}
+	}
+	filterResult, filterUsage, err := ApplyRenderingSafetyFilter(ctx, completer, entries, allSegments, RenderingSafetyFilterConfig{
+		SourceLang:  cfg.SourceLang,
+		TargetLang:  cfg.TargetLang,
+		MaxTokens:   cfg.MaxTokens,
+		ArtifactDir: cfg.ArtifactDir,
+	})
+	if err != nil {
+		return Artifact{}, usage, err
+	}
+	usage.PromptTokenCount += filterUsage.PromptTokenCount
+	usage.CandidatesTokenCount += filterUsage.CandidatesTokenCount
+	usage.TotalTokenCount += filterUsage.TotalTokenCount
+	entries = filterResult.Entries
+	filterInfo := filterResult.Info
 	artifact := Artifact{
 		Version:       1,
 		PromptVersion: PromptVersion,
 		SourceLang:    cfg.SourceLang.Code,
 		TargetLang:    cfg.TargetLang.Code,
-		CreatedAt:     time.Now().UTC(),
+		CreatedAt:     createdAt,
 		Input: InputInfo{
 			Path:                     cfg.InputPath,
 			PreprocessedSegmentCount: len(segments),
@@ -174,8 +223,9 @@ func Extract(ctx context.Context, completer translation.TextCompleter, segments 
 			GlossaryRuns:         cfg.Runs,
 			GlossaryWindowChunks: cfg.WindowChunks,
 		},
-		Entries:       entries,
-		RejectedCount: len(allRejected),
+		RenderingSafetyFilter: &filterInfo,
+		Entries:               entries,
+		RejectedCount:         len(allRejected),
 	}
 	if cfg.ArtifactDir != "" {
 		if err := WriteJSON(filepath.Join(cfg.ArtifactDir, "merged_glossary.json"), artifact); err != nil {

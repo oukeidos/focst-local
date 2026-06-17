@@ -89,7 +89,7 @@ func TestRunTranslationAutoGlossaryInjectsWithoutSavingByDefault(t *testing.T) {
 	if result.Status != TranslationStatusSuccess {
 		t.Fatalf("status = %s, want success", result.Status)
 	}
-	server.assertCounts(t, 1, 1)
+	server.assertCounts(t, 1, 1, 1)
 	if !server.systemPromptContains("- 架空田一郎 -> 가공다 이치로") {
 		t.Fatalf("translation system prompt did not include generated glossary mapping:\n%s", server.lastTranslationSystemPrompt())
 	}
@@ -140,7 +140,7 @@ func TestRunTranslationAutoGlossarySavesAndInjectsWhenSavePathSet(t *testing.T) 
 	if result.Status != TranslationStatusSuccess {
 		t.Fatalf("status = %s, want success", result.Status)
 	}
-	server.assertCounts(t, 1, 1)
+	server.assertCounts(t, 1, 1, 1)
 	if !server.systemPromptContains("- 架空田一郎 -> 가공다 이치로") {
 		t.Fatalf("translation system prompt did not include generated glossary mapping:\n%s", server.lastTranslationSystemPrompt())
 	}
@@ -151,8 +151,14 @@ func TestRunTranslationAutoGlossarySavesAndInjectsWhenSavePathSet(t *testing.T) 
 	if len(artifact.Entries) != 1 || artifact.Entries[0].Source != "架空田一郎" {
 		t.Fatalf("unexpected generated artifact entries: %+v", artifact.Entries)
 	}
+	if artifact.RenderingSafetyFilter == nil || !artifact.RenderingSafetyFilter.Applied {
+		t.Fatalf("generated artifact missing rendering safety filter metadata: %+v", artifact.RenderingSafetyFilter)
+	}
 	if _, err := os.Stat(filepath.Join(artifactsDir, "window_000", "run_001_prompt.txt")); err != nil {
 		t.Fatalf("expected debug prompt artifact: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(artifactsDir, "rendering_safety_filter", "batch_001_prompt.txt")); err != nil {
+		t.Fatalf("expected rendering safety filter artifact: %v", err)
 	}
 	out, err := os.ReadFile(outputPath)
 	if err != nil {
@@ -228,7 +234,7 @@ func TestRunTranslationGlossaryFileReusesArtifactWithoutExtraction(t *testing.T)
 	if result.Status != TranslationStatusSuccess {
 		t.Fatalf("status = %s, want success", result.Status)
 	}
-	server.assertCounts(t, 0, 1)
+	server.assertCounts(t, 0, 0, 1)
 	if !server.systemPromptContains("- 架空田一郎 -> 기존 이치로") {
 		t.Fatalf("translation system prompt did not include reused glossary mapping:\n%s", server.lastTranslationSystemPrompt())
 	}
@@ -266,7 +272,7 @@ func TestRunGlossaryExtractionWritesArtifactWithoutTranslation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunGlossaryExtraction failed: %v", err)
 	}
-	server.assertCounts(t, 1, 0)
+	server.assertCounts(t, 1, 1, 0)
 	if result.OutputPath != glossaryPath {
 		t.Fatalf("output path = %q, want %q", result.OutputPath, glossaryPath)
 	}
@@ -277,8 +283,17 @@ func TestRunGlossaryExtractionWritesArtifactWithoutTranslation(t *testing.T) {
 	if len(artifact.Entries) != 1 || artifact.Entries[0].Source != "架空田一郎" {
 		t.Fatalf("unexpected extracted artifact entries: %+v", artifact.Entries)
 	}
+	if artifact.RenderingSafetyFilter == nil || !artifact.RenderingSafetyFilter.Applied {
+		t.Fatalf("extracted artifact missing rendering safety filter metadata: %+v", artifact.RenderingSafetyFilter)
+	}
 	if _, err := os.Stat(filepath.Join(artifactsDir, "merged_glossary.json")); err != nil {
 		t.Fatalf("expected merged debug artifact: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(artifactsDir, "merged_glossary.prefilter.json")); err != nil {
+		t.Fatalf("expected prefilter debug artifact: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(artifactsDir, "rendering_safety_filter", "judgments.json")); err != nil {
+		t.Fatalf("expected rendering safety filter judgments artifact: %v", err)
 	}
 }
 
@@ -319,6 +334,7 @@ type pipelineGlossaryTestServer struct {
 	*httptest.Server
 	mu                       sync.Mutex
 	glossaryRequests         int
+	renderingSafetyRequests  int
 	translationRequests      int
 	translationSystemPrompts []string
 }
@@ -345,10 +361,20 @@ func newPipelineGlossaryTestServer(t *testing.T) *pipelineGlossaryTestServer {
 		w.Header().Set("Content-Type", "application/json")
 		switch formatType {
 		case "text":
-			state.mu.Lock()
-			state.glossaryRequests++
-			state.mu.Unlock()
-			writeChatContent(t, w, "| Source | Korean rendering |\n| --- | --- |\n| 架空田一郎 | 가공다 이치로 |\n", 5, 7)
+			switch systemPrompt {
+			case glossary.SystemPrompt:
+				state.mu.Lock()
+				state.glossaryRequests++
+				state.mu.Unlock()
+				writeChatContent(t, w, "| Source | Korean rendering |\n| --- | --- |\n| 架空田一郎 | 가공다 이치로 |\n", 5, 7)
+			case glossary.RenderingSafetyFilterSystemPrompt:
+				state.mu.Lock()
+				state.renderingSafetyRequests++
+				state.mu.Unlock()
+				writeChatContent(t, w, "| Row | Expected strategy | Fit | Decision |\n| --- | --- | --- | --- |\n| 1 | name_form | fits | keep |\n", 3, 4)
+			default:
+				http.Error(w, "unexpected text system prompt", http.StatusBadRequest)
+			}
 		case "json_object":
 			state.mu.Lock()
 			state.translationRequests++
@@ -380,12 +406,12 @@ func newPipelineGlossaryTestServer(t *testing.T) *pipelineGlossaryTestServer {
 	return state
 }
 
-func (s *pipelineGlossaryTestServer) assertCounts(t *testing.T, glossaryRequests, translationRequests int) {
+func (s *pipelineGlossaryTestServer) assertCounts(t *testing.T, glossaryRequests, renderingSafetyRequests, translationRequests int) {
 	t.Helper()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.glossaryRequests != glossaryRequests || s.translationRequests != translationRequests {
-		t.Fatalf("requests = glossary:%d translation:%d, want glossary:%d translation:%d", s.glossaryRequests, s.translationRequests, glossaryRequests, translationRequests)
+	if s.glossaryRequests != glossaryRequests || s.renderingSafetyRequests != renderingSafetyRequests || s.translationRequests != translationRequests {
+		t.Fatalf("requests = glossary:%d rendering_safety:%d translation:%d, want glossary:%d rendering_safety:%d translation:%d", s.glossaryRequests, s.renderingSafetyRequests, s.translationRequests, glossaryRequests, renderingSafetyRequests, translationRequests)
 	}
 }
 
