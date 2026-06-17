@@ -19,6 +19,7 @@ import (
 	"github.com/oukeidos/focst-local/internal/localllm"
 	"github.com/oukeidos/focst-local/internal/logger"
 	"github.com/oukeidos/focst-local/internal/phraseanchor"
+	"github.com/oukeidos/focst-local/internal/postpolish"
 	"github.com/oukeidos/focst-local/internal/recovery"
 	"github.com/oukeidos/focst-local/internal/srt"
 	"github.com/oukeidos/focst-local/internal/translation"
@@ -94,6 +95,16 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 	}
 	if cfg.PhraseAnchorsArtifactsDir != "" {
 		if err := files.RejectSymlinkPath(cfg.PhraseAnchorsArtifactsDir); err != nil {
+			return TranslationResult{}, err
+		}
+	}
+	if cfg.SavePolishCorrectionsPath != "" {
+		if err := files.RejectSymlinkPath(cfg.SavePolishCorrectionsPath); err != nil {
+			return TranslationResult{}, err
+		}
+	}
+	if cfg.PolishArtifactsDir != "" {
+		if err := files.RejectSymlinkPath(cfg.PolishArtifactsDir); err != nil {
 			return TranslationResult{}, err
 		}
 	}
@@ -376,8 +387,33 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 			} else {
 				logger.Info("Post-processing skipped")
 			}
+			if cfg.PostPolish {
+				polishResult, err := postpolish.Run(ctx, client, segments, outSegments, postpolish.Config{
+					SourceLanguage:      srcLang,
+					TargetLanguage:      tgtLang,
+					BroadChunkSize:      cfg.PolishBroadChunkSize,
+					RepairChunkSize:     cfg.PolishRepairChunkSize,
+					MaxTokens:           cfg.PolishMaxTokens,
+					ArtifactDir:         cfg.PolishArtifactsDir,
+					ProtectedRenderings: finalMapping,
+				})
+				if err != nil {
+					return result, fmt.Errorf("post-polish failed: %w", err)
+				}
+				result.Usage = addUsage(result.Usage, polishResult.Usage)
+				outSegments = postpolish.Apply(outSegments, polishResult.Accepted)
+				if cfg.SavePolishCorrectionsPath != "" {
+					if err := postpolish.SaveArtifact(cfg.SavePolishCorrectionsPath, polishResult.Artifact); err != nil {
+						return result, err
+					}
+					logger.Info("Post-polish corrections saved", "event", "post_polish_saved", "path", cfg.SavePolishCorrectionsPath, "accepted", len(polishResult.Accepted), "rejected", len(polishResult.Rejected))
+				}
+			}
 		} else {
 			logger.Info("Skipping post-processing for partial output")
+			if cfg.PostPolish {
+				logger.Info("Skipping post-polish for partial output", "event", "post_polish_skipped", "reason", "partial_output")
+			}
 		}
 
 		if err := srt.Save(effectiveOutputPath, outSegments); err != nil {

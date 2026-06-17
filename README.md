@@ -107,7 +107,23 @@ Run `./focst-local --help` or `./focst-local translate --help` for the current
 translation, preprocessing, postprocessing, chunking, logging, and recovery
 options.
 
-## Local Glossary (Experimental)
+## Experimental Local Quality Passes
+
+`focst-local` includes three optional local quality passes: glossary generation,
+phrase anchors, and post-translation polish. For practical use, the glossary
+pass is recommended because it often improves name and term consistency. Phrase
+anchors and post-polish are purely experimental: they may occasionally help, but
+current testing does not show reliable quality improvement and they can make
+translations worse.
+
+Recommended use:
+
+- Start with `--auto-glossary` for important translations.
+- Use phrase anchors or post-polish only for experiments, debugging, or manual
+  comparison runs.
+- Save and inspect artifacts before trusting output from any experimental pass.
+
+### Local Glossary
 
 `focst-local` can generate a local glossary with the same local model used for
 translation, then inject that glossary into the translation prompt. This helps
@@ -151,7 +167,7 @@ Known limits:
   translation quality.
 - Explicit `--names` mappings take priority over generated glossary entries.
 
-## Local Phrase Anchors (Experimental)
+### Local Phrase Anchors
 
 `focst-local` can also generate phrase anchors with the local model. Phrase
 anchors are soft phrase-level guidance for local ambiguity, idioms, wordplay,
@@ -179,6 +195,46 @@ split extraction and translation when you want to inspect it first:
 Known limits: phrase anchors are stochastic, high-cost, and experimental. They
 can improve difficult local phrasing, but wrong anchors can also hurt quality;
 save and inspect artifacts for important jobs.
+
+### Post-Translation Polish
+
+`focst-local` can run an optional local polish pass after translation. It runs
+two conservative correction prompts on the translated subtitle text and merges
+their corrections. This can fix some awkward target-language phrasing,
+typo-like output, and minor subtitle readability problems.
+
+Use `--post-polish`:
+
+```bash
+./focst-local translate input.srt output.srt \
+  --source ja \
+  --target ko \
+  --post-polish
+```
+
+Add `--save-polish-corrections corrections.polish.json` when you want to keep
+the accepted/rejected correction artifact.
+
+To inspect or reuse an existing translation first, split the workflow:
+
+```bash
+./focst-local translate input.srt draft.srt \
+  --source ja \
+  --target ko
+
+./focst-local polish input.srt draft.srt polished.srt \
+  --source ja \
+  --target ko
+```
+
+Post-polish works without glossary or names. When glossary or names mappings
+are available, they are used as a protective guard so polish candidates do not
+remove protected renderings.
+
+Known limits: this is experimental and can still make bad edits. In particular,
+sentences split across multiple subtitle IDs may be polished only partially,
+which can make adjacent subtitles less natural or less faithful. Save and
+inspect outputs for important jobs.
 
 ## Local Runtime Flags
 

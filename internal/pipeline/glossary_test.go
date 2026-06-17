@@ -14,6 +14,7 @@ import (
 
 	"github.com/oukeidos/focst-local/internal/glossary"
 	"github.com/oukeidos/focst-local/internal/llamaserver"
+	"github.com/oukeidos/focst-local/internal/postpolish"
 	"github.com/oukeidos/focst-local/internal/recovery"
 	"github.com/oukeidos/focst-local/internal/translation"
 )
@@ -240,6 +241,66 @@ func TestRunTranslationGlossaryFileReusesArtifactWithoutExtraction(t *testing.T)
 	}
 }
 
+func TestRunTranslationPostPolishWorksWithoutGlossaryOrNames(t *testing.T) {
+	tmpDir := t.TempDir()
+	inputPath := writeSyntheticSRT(t, tmpDir)
+	outputPath := filepath.Join(tmpDir, "out.srt")
+	correctionsPath := filepath.Join(tmpDir, "out.polish.json")
+	server := newPipelineGlossaryTestServer(t)
+	defer server.Close()
+
+	result, err := RunTranslation(context.Background(), Config{
+		InputPath:                 inputPath,
+		OutputPath:                outputPath,
+		BaseURL:                   server.URL + "/v1",
+		Model:                     "test-model",
+		MaxTokens:                 8192,
+		TranslationTimeout:        time.Second,
+		ChunkSize:                 2,
+		ContextSize:               0,
+		Concurrency:               1,
+		SentenceAwareChunks:       false,
+		ChunkBoundaryPlanner:      ChunkBoundaryPlannerOff,
+		NoPreprocess:              true,
+		NoPostprocess:             true,
+		SourceLang:                "ja",
+		TargetLang:                "ko",
+		Overwrite:                 true,
+		PostPolish:                true,
+		SavePolishCorrectionsPath: correctionsPath,
+		PolishBroadChunkSize:      30,
+		PolishRepairChunkSize:     100,
+		PolishMaxTokens:           2048,
+		LlamaManager:              staticLlamaManager{},
+	})
+	if err != nil {
+		t.Fatalf("RunTranslation failed: %v", err)
+	}
+	if result.Status != TranslationStatusSuccess {
+		t.Fatalf("status = %s, want success", result.Status)
+	}
+	server.assertCounts(t, 0, 0, 1)
+	server.assertPostPolishCount(t, 2)
+	out, err := os.ReadFile(outputPath)
+	if err != nil {
+		t.Fatalf("failed to read output: %v", err)
+	}
+	if !strings.Contains(string(out), "교정 架空田一郎입니다") {
+		t.Fatalf("output missing post-polish correction:\n%s", string(out))
+	}
+	var artifact postpolish.Artifact
+	data, err := os.ReadFile(correctionsPath)
+	if err != nil {
+		t.Fatalf("failed to read polish artifact: %v", err)
+	}
+	if err := json.Unmarshal(data, &artifact); err != nil {
+		t.Fatalf("failed to parse polish artifact: %v", err)
+	}
+	if len(artifact.Accepted) != 1 || artifact.Accepted[0].Pass != postpolish.PassRepair {
+		t.Fatalf("unexpected polish artifact: %+v", artifact)
+	}
+}
+
 func TestRunGlossaryExtractionWritesArtifactWithoutTranslation(t *testing.T) {
 	tmpDir := t.TempDir()
 	inputPath := writeSyntheticSRT(t, tmpDir)
@@ -336,6 +397,7 @@ type pipelineGlossaryTestServer struct {
 	glossaryRequests         int
 	renderingSafetyRequests  int
 	translationRequests      int
+	postPolishRequests       int
 	translationSystemPrompts []string
 }
 
@@ -376,6 +438,23 @@ func newPipelineGlossaryTestServer(t *testing.T) *pipelineGlossaryTestServer {
 				http.Error(w, "unexpected text system prompt", http.StatusBadRequest)
 			}
 		case "json_object":
+			if strings.Contains(systemPrompt, "subtitle copyeditor") {
+				state.mu.Lock()
+				state.postPolishRequests++
+				state.mu.Unlock()
+				resp := postpolish.Response{Corrections: []postpolish.ResponseCorrection{{
+					ID:         1,
+					SourceText: "架空田一郎です",
+					Text:       "교정 架空田一郎입니다",
+				}}}
+				content, err := json.Marshal(resp)
+				if err != nil {
+					http.Error(w, err.Error(), http.StatusInternalServerError)
+					return
+				}
+				writeChatContent(t, w, string(content), 2, 3)
+				return
+			}
 			state.mu.Lock()
 			state.translationRequests++
 			state.translationSystemPrompts = append(state.translationSystemPrompts, systemPrompt)
@@ -412,6 +491,15 @@ func (s *pipelineGlossaryTestServer) assertCounts(t *testing.T, glossaryRequests
 	defer s.mu.Unlock()
 	if s.glossaryRequests != glossaryRequests || s.renderingSafetyRequests != renderingSafetyRequests || s.translationRequests != translationRequests {
 		t.Fatalf("requests = glossary:%d rendering_safety:%d translation:%d, want glossary:%d rendering_safety:%d translation:%d", s.glossaryRequests, s.renderingSafetyRequests, s.translationRequests, glossaryRequests, renderingSafetyRequests, translationRequests)
+	}
+}
+
+func (s *pipelineGlossaryTestServer) assertPostPolishCount(t *testing.T, postPolishRequests int) {
+	t.Helper()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.postPolishRequests != postPolishRequests {
+		t.Fatalf("post-polish requests = %d, want %d", s.postPolishRequests, postPolishRequests)
 	}
 }
 

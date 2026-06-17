@@ -8,6 +8,7 @@ import (
 	"github.com/oukeidos/focst-local/internal/llamaserver"
 	"github.com/oukeidos/focst-local/internal/localllm"
 	"github.com/oukeidos/focst-local/internal/phraseanchor"
+	"github.com/oukeidos/focst-local/internal/postpolish"
 	"github.com/oukeidos/focst-local/internal/translator"
 )
 
@@ -77,6 +78,16 @@ type Config struct {
 	PhraseAnchorProperFilterRuns         int
 	PhraseAnchorProperFilterWindowChunks int
 
+	// Optional post-translation polish. This is independent from glossary,
+	// names, and phrase anchors; mappings are used only as a protection guard
+	// when available.
+	PostPolish                bool
+	SavePolishCorrectionsPath string
+	PolishArtifactsDir        string
+	PolishBroadChunkSize      int
+	PolishRepairChunkSize     int
+	PolishMaxTokens           int
+
 	// Callbacks
 	// OnProgress is called with translation progress updates.
 	OnProgress func(translator.TranslationProgress)
@@ -140,6 +151,15 @@ func (c Config) Normalize() (Config, []string) {
 	}
 	if c.PhraseAnchorProperFilterWindowChunks <= 0 {
 		c.PhraseAnchorProperFilterWindowChunks = phraseanchor.DefaultProperFilterWindowChunks
+	}
+	if c.PolishBroadChunkSize <= 0 {
+		c.PolishBroadChunkSize = postpolish.DefaultBroadChunkSize
+	}
+	if c.PolishRepairChunkSize <= 0 {
+		c.PolishRepairChunkSize = postpolish.DefaultRepairChunkSize
+	}
+	if c.PolishMaxTokens <= 0 {
+		c.PolishMaxTokens = postpolish.DefaultMaxTokens
 	}
 	if c.LlamaServer.ModelAlias == "" {
 		c.LlamaServer.ModelAlias = c.Model
@@ -235,6 +255,18 @@ func (c Config) Validate() error {
 	}
 	if c.PhraseAnchorProperFilterWindowChunks <= 0 {
 		return fmt.Errorf("phraseAnchorProperFilterWindowChunks must be greater than 0, got %d", c.PhraseAnchorProperFilterWindowChunks)
+	}
+	if c.SavePolishCorrectionsPath != "" && !c.PostPolish {
+		return fmt.Errorf("--save-polish-corrections requires --post-polish")
+	}
+	if c.PolishBroadChunkSize <= 0 {
+		return fmt.Errorf("polishBroadChunkSize must be greater than 0, got %d", c.PolishBroadChunkSize)
+	}
+	if c.PolishRepairChunkSize <= 0 {
+		return fmt.Errorf("polishRepairChunkSize must be greater than 0, got %d", c.PolishRepairChunkSize)
+	}
+	if c.PolishMaxTokens <= 0 {
+		return fmt.Errorf("polishMaxTokens must be greater than 0, got %d", c.PolishMaxTokens)
 	}
 	if c.BaseURL == "" {
 		return fmt.Errorf("llama base URL is required")

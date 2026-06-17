@@ -180,3 +180,44 @@ func TestPhraseAnchorFlags_RejectAmbiguousAutoAndFile(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestPostPolishFlags_Parse(t *testing.T) {
+	cases := [][]string{
+		{"--post-polish"},
+		{"--save-polish-corrections", "out.polish.json"},
+		{"--polish-artifacts", "out.polish"},
+		{"--polish-broad-chunk-size", "30"},
+		{"--polish-repair-chunk-size", "100"},
+		{"--polish-max-tokens", "2048"},
+		{"translate", "--post-polish"},
+		{"polish", "--polish-broad-chunk-size", "30"},
+		{"polish", "--polish-repair-chunk-size", "100"},
+		{"polish", "--polish-max-tokens", "2048"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			out, err := executeCommand(t, args...)
+			if err == nil {
+				t.Fatalf("expected command error from missing required args, got nil")
+			}
+			if strings.Contains(out, "unknown flag") {
+				t.Fatalf("expected post-polish flag to parse, got output: %s", out)
+			}
+		})
+	}
+}
+
+func TestPostPolishFlags_RejectSaveWithoutPostPolish(t *testing.T) {
+	_, err := executeCommand(t,
+		"translate",
+		"input.srt",
+		"output.srt",
+		"--save-polish-corrections", "out.polish.json",
+	)
+	if err == nil {
+		t.Fatalf("expected save-polish-corrections dependency error")
+	}
+	if !strings.Contains(err.Error(), "--save-polish-corrections requires --post-polish") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

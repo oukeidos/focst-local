@@ -223,6 +223,55 @@ func TestClient_CompleteTextWithOptionsPreservesZeroTemperature(t *testing.T) {
 	}
 }
 
+func TestClient_CompleteJSONWithOptionsUsesSchemaAndSampler(t *testing.T) {
+	var got chatCompletionRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("failed to decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices": [{"message": {"role": "assistant", "content": "{\"corrections\":[]}"}}],
+			"usage": {"prompt_tokens": 13, "completion_tokens": 5, "total_tokens": 18}
+		}`))
+	}))
+	defer server.Close()
+
+	schema := map[string]any{
+		"type":     "object",
+		"required": []string{"corrections"},
+	}
+	client := NewClient(server.URL+"/v1", "test-model")
+	resp, err := client.CompleteJSONWithOptions(context.Background(), "system", "user", schema, translation.TextCompletionOptions{
+		MaxTokens:   2048,
+		Temperature: 0.0,
+		TopP:        0.95,
+		TopK:        64,
+	})
+	if err != nil {
+		t.Fatalf("CompleteJSONWithOptions failed: %v", err)
+	}
+	if resp.Content != `{"corrections":[]}` || resp.Usage.TotalTokenCount != 18 {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if got.ResponseFormat.Type != "json_object" {
+		t.Fatalf("response format = %q, want json_object", got.ResponseFormat.Type)
+	}
+	if got.ResponseFormat.Schema["type"] != "object" {
+		t.Fatalf("schema type = %+v, want object", got.ResponseFormat.Schema["type"])
+	}
+	required, ok := got.ResponseFormat.Schema["required"].([]any)
+	if !ok || !reflect.DeepEqual(required, []any{"corrections"}) {
+		t.Fatalf("schema required = %+v, want corrections", got.ResponseFormat.Schema["required"])
+	}
+	if got.Temperature != 0.0 || got.TopP != 0.95 || got.TopK != 64 || got.MaxTokens != 2048 {
+		t.Fatalf("sampler mismatch: temp=%v top_p=%v top_k=%d max=%d", got.Temperature, got.TopP, got.TopK, got.MaxTokens)
+	}
+}
+
 func TestClient_CompleteTextChatWithSamplerOmitsResponseFormat(t *testing.T) {
 	var got map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

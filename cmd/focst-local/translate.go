@@ -14,6 +14,7 @@ import (
 	"github.com/oukeidos/focst-local/internal/logger"
 	"github.com/oukeidos/focst-local/internal/phraseanchor"
 	"github.com/oukeidos/focst-local/internal/pipeline"
+	"github.com/oukeidos/focst-local/internal/postpolish"
 	"github.com/oukeidos/focst-local/internal/prompt"
 	"github.com/oukeidos/focst-local/internal/translator"
 	"github.com/spf13/cobra"
@@ -49,6 +50,12 @@ type translateOptions struct {
 	phraseAnchorQuoteFilterBatchSize     int
 	phraseAnchorProperFilterRuns         int
 	phraseAnchorProperFilterWindowChunks int
+	postPolish                           bool
+	savePolishCorrectionsPath            string
+	polishArtifactsDir                   string
+	polishBroadChunkSize                 int
+	polishRepairChunkSize                int
+	polishMaxTokens                      int
 	noPreprocess                         bool
 	noPostprocess                        bool
 	noLangPreprocess                     bool
@@ -109,6 +116,12 @@ func addTranslateFlags(cmd *cobra.Command, opts *translateOptions) {
 	cmd.Flags().IntVar(&opts.phraseAnchorQuoteFilterBatchSize, "phrase-anchor-quote-filter-batch-size", phraseanchor.DefaultQuoteFilterBatchSize, "Batch size for phrase anchor quote-kind filtering")
 	cmd.Flags().IntVar(&opts.phraseAnchorProperFilterRuns, "phrase-anchor-proper-filter-runs", phraseanchor.DefaultProperFilterRuns, "Number of phrase anchor source-name filter runs")
 	cmd.Flags().IntVar(&opts.phraseAnchorProperFilterWindowChunks, "phrase-anchor-proper-filter-window-chunks", phraseanchor.DefaultProperFilterWindowChunks, "Number of translation chunks per phrase anchor source-name filter window")
+	cmd.Flags().BoolVar(&opts.postPolish, "post-polish", false, "Run experimental local post-translation polish after successful translation")
+	cmd.Flags().StringVar(&opts.savePolishCorrectionsPath, "save-polish-corrections", "", "Path to save accepted/rejected post-polish corrections JSON")
+	cmd.Flags().StringVar(&opts.polishArtifactsDir, "polish-artifacts", "", "Directory for post-polish debug artifacts")
+	cmd.Flags().IntVar(&opts.polishBroadChunkSize, "polish-broad-chunk-size", postpolish.DefaultBroadChunkSize, "Segments per broad post-polish request")
+	cmd.Flags().IntVar(&opts.polishRepairChunkSize, "polish-repair-chunk-size", postpolish.DefaultRepairChunkSize, "Segments per repair post-polish request")
+	cmd.Flags().IntVar(&opts.polishMaxTokens, "polish-max-tokens", postpolish.DefaultMaxTokens, "Maximum generated tokens per post-polish request")
 	cmd.Flags().BoolVar(&opts.noPreprocess, "no-preprocess", false, "Disable all preprocessing (bracket removal, symbol filtering)")
 	cmd.Flags().BoolVar(&opts.noLangPreprocess, "no-lang-preprocess", false, "Disable language-specific preprocessing only")
 	cmd.Flags().BoolVar(&opts.noPostprocess, "no-postprocess", false, "Disable all post-processing (punctuation, timing correction)")
@@ -205,6 +218,12 @@ func runTranslate(cmd *cobra.Command, args []string, opts *translateOptions) err
 		PhraseAnchorQuoteFilterBatchSize:     opts.phraseAnchorQuoteFilterBatchSize,
 		PhraseAnchorProperFilterRuns:         opts.phraseAnchorProperFilterRuns,
 		PhraseAnchorProperFilterWindowChunks: opts.phraseAnchorProperFilterWindowChunks,
+		PostPolish:                           opts.postPolish,
+		SavePolishCorrectionsPath:            opts.savePolishCorrectionsPath,
+		PolishArtifactsDir:                   opts.polishArtifactsDir,
+		PolishBroadChunkSize:                 opts.polishBroadChunkSize,
+		PolishRepairChunkSize:                opts.polishRepairChunkSize,
+		PolishMaxTokens:                      opts.polishMaxTokens,
 		OnProgress: func(p translator.TranslationProgress) {
 			switch p.State {
 			case translator.StateCompleted:
