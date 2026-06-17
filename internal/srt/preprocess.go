@@ -1,6 +1,7 @@
 package srt
 
 import (
+	"html"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -116,10 +117,27 @@ func isMeaningless(lines []string) bool {
 }
 
 func normalizeBySourcePath(segments []Segment, sourcePath string) []Segment {
+	normalized := normalizeTextEntitiesBySourcePath(segments, sourcePath)
 	if !strings.EqualFold(filepath.Ext(sourcePath), ".vtt") {
+		return normalized
+	}
+	return mergeConsecutiveSameTimestampSegments(normalized)
+}
+
+func normalizeTextEntitiesBySourcePath(segments []Segment, sourcePath string) []Segment {
+	ext := filepath.Ext(sourcePath)
+	if !strings.EqualFold(ext, ".srt") && !strings.EqualFold(ext, ".vtt") {
 		return segments
 	}
-	return mergeConsecutiveSameTimestampSegments(segments)
+	normalized := make([]Segment, len(segments))
+	for i, segment := range segments {
+		normalized[i] = segment
+		normalized[i].Lines = make([]string, len(segment.Lines))
+		for j, line := range segment.Lines {
+			normalized[i].Lines[j] = html.UnescapeString(line)
+		}
+	}
+	return normalized
 }
 
 func mergeConsecutiveSameTimestampSegments(segments []Segment) []Segment {

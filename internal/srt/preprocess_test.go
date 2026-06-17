@@ -1,7 +1,10 @@
 package srt
 
 import (
+	"os"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -268,5 +271,89 @@ func TestPreprocessForPathWithMappingOptions_NoMergeForSeparatedGroups(t *testin
 	}
 	if !reflect.DeepEqual(cleaned, expected) {
 		t.Fatalf("cleaned = %+v, want %+v", cleaned, expected)
+	}
+}
+
+func TestPreprocessForPathWithMappingOptions_NormalizesVTTEntitiesBeforeJapaneseAngleCleanup(t *testing.T) {
+	segments := []Segment{{ID: 1, Lines: []string{"仕事に集中する人物&gt;"}}}
+
+	cleaned, _ := PreprocessForPathWithMappingOptions(segments, "ja", "sample.vtt", true)
+	expected := []Segment{{ID: 1, Lines: []string{"仕事に集中する人物"}}}
+	if !reflect.DeepEqual(cleaned, expected) {
+		t.Fatalf("cleaned = %+v, want %+v", cleaned, expected)
+	}
+}
+
+func TestPreprocessForPathWithMappingOptions_NormalizesSRTEntitiesBeforeJapaneseAngleCleanup(t *testing.T) {
+	segments := []Segment{{ID: 1, Lines: []string{"仕事に集中する人物&gt;"}}}
+
+	cleaned, _ := PreprocessForPathWithMappingOptions(segments, "ja", "sample.srt", true)
+	expected := []Segment{{ID: 1, Lines: []string{"仕事に集中する人物"}}}
+	if !reflect.DeepEqual(cleaned, expected) {
+		t.Fatalf("cleaned = %+v, want %+v", cleaned, expected)
+	}
+}
+
+func TestPreprocessForPathWithMappingOptions_DoesNotNormalizeEntitiesForOtherFormats(t *testing.T) {
+	segments := []Segment{{ID: 1, Lines: []string{"仕事に集中する人物&gt;"}}}
+
+	cleaned, _ := PreprocessForPathWithMappingOptions(segments, "ja", "sample.ass", true)
+	expected := []Segment{{ID: 1, Lines: []string{"仕事に集中する人物&gt;"}}}
+	if !reflect.DeepEqual(cleaned, expected) {
+		t.Fatalf("cleaned = %+v, want %+v", cleaned, expected)
+	}
+}
+
+func TestPreprocessWithMappingOptions_DoesNotNormalizeEntitiesWithoutSourcePath(t *testing.T) {
+	segments := []Segment{{ID: 1, Lines: []string{"仕事に集中する人物&gt;"}}}
+
+	cleaned, _ := PreprocessWithMappingOptions(segments, "ja", true)
+	expected := []Segment{{ID: 1, Lines: []string{"仕事に集中する人物&gt;"}}}
+	if !reflect.DeepEqual(cleaned, expected) {
+		t.Fatalf("cleaned = %+v, want %+v", cleaned, expected)
+	}
+}
+
+func TestPreprocessForPathWithMappingOptions_NormalizesStandardAmpersandEntityOnce(t *testing.T) {
+	segments := []Segment{{ID: 1, Lines: []string{"A &amp; B"}}}
+
+	cleaned, _ := PreprocessForPathWithMappingOptions(segments, "en", "sample.srt", false)
+	expected := []Segment{{ID: 1, Lines: []string{"A & B"}}}
+	if !reflect.DeepEqual(cleaned, expected) {
+		t.Fatalf("cleaned = %+v, want %+v", cleaned, expected)
+	}
+}
+
+func TestPreprocessForPathWithMappingOptions_DocumentsSinglePassDoubleEscapedEntity(t *testing.T) {
+	segments := []Segment{{ID: 1, Lines: []string{"A &amp;gt; B"}}}
+
+	cleaned, _ := PreprocessForPathWithMappingOptions(segments, "en", "sample.vtt", false)
+	expected := []Segment{{ID: 1, Lines: []string{"A &gt; B"}}}
+	if !reflect.DeepEqual(cleaned, expected) {
+		t.Fatalf("cleaned = %+v, want %+v", cleaned, expected)
+	}
+}
+
+func TestLoadThenPreprocessVTTDoesNotExposeEntityResidue(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "synthetic.vtt")
+	content := "WEBVTT\n\n00:00:01.000 --> 00:00:02.000\n合成人物&gt;\n"
+	if err := os.WriteFile(path, []byte(content), 0600); err != nil {
+		t.Fatalf("failed to write synthetic vtt: %v", err)
+	}
+
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	cleaned, _ := PreprocessForPathWithMappingOptions(loaded, "ja", path, true)
+	if len(cleaned) != 1 {
+		t.Fatalf("cleaned len = %d, want 1: %+v", len(cleaned), cleaned)
+	}
+	if strings.Contains(cleaned[0].Lines[0], "&gt;") {
+		t.Fatalf("entity residue survived preprocessing: %+v", cleaned)
+	}
+	if cleaned[0].Lines[0] != "合成人物" {
+		t.Fatalf("cleaned line = %q, want 合成人物", cleaned[0].Lines[0])
 	}
 }
