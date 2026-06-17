@@ -71,10 +71,7 @@ func TestDiagnosticSourceEchoFirstChunk(t *testing.T) {
 			{Role: "system", Content: translator.GetSystemPrompt(src.Name, tgt.Name)},
 			{Role: "user", Content: string(requestJSON)},
 		},
-		Temperature: DefaultTemperature,
-		TopP:        DefaultTopP,
-		TopK:        DefaultTopK,
-		MaxTokens:   maxTokens,
+		MaxTokens: maxTokens,
 		ResponseFormat: responseFormat{
 			Type:   "json_object",
 			Schema: exactIDSchema(req.Target),

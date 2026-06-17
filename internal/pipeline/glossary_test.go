@@ -188,9 +188,6 @@ func TestRunTranslationGlossaryFileReusesArtifactWithoutExtraction(t *testing.T)
 		Config: glossary.RunConfig{
 			Model:                "test-model",
 			BaseURL:              "http://127.0.0.1:8080/v1",
-			Temperature:          1,
-			TopP:                 0.95,
-			TopK:                 64,
 			MaxTokens:            8192,
 			GlossaryRuns:         1,
 			GlossaryWindowChunks: 3,

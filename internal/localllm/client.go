@@ -19,9 +19,6 @@ import (
 const (
 	DefaultBaseURL          = "http://127.0.0.1:8080/v1"
 	DefaultModel            = "gemma-4-26b-a4b-qat-q4_0"
-	DefaultTemperature      = 1.0
-	DefaultTopP             = 0.95
-	DefaultTopK             = 64
 	DefaultMaxTokens        = 8192
 	DefaultPlannerMaxTokens = 192
 	// DefaultTranslationTimeout disables per-request timeout for slow local models.
@@ -102,10 +99,7 @@ func (c *Client) Translate(ctx context.Context, request translation.RequestData)
 			{Role: "system", Content: c.systemInstruction},
 			{Role: "user", Content: string(requestJSON)},
 		},
-		Temperature: DefaultTemperature,
-		TopP:        DefaultTopP,
-		TopK:        DefaultTopK,
-		MaxTokens:   c.maxTokens,
+		MaxTokens: c.maxTokens,
 		ResponseFormat: responseFormat{
 			Type:   "json_object",
 			Schema: exactIDSchema(request.Target),
@@ -167,10 +161,7 @@ func (c *Client) Translate(ctx context.Context, request translation.RequestData)
 // plaintext Markdown is more reliable than structured JSON.
 func (c *Client) CompleteText(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (*translation.TextCompletion, error) {
 	return c.CompleteTextWithOptions(ctx, systemPrompt, userPrompt, translation.TextCompletionOptions{
-		MaxTokens:   maxTokens,
-		Temperature: DefaultTemperature,
-		TopP:        DefaultTopP,
-		TopK:        DefaultTopK,
+		MaxTokens: maxTokens,
 	})
 }
 
@@ -184,14 +175,6 @@ func (c *Client) CompleteTextWithOptions(ctx context.Context, systemPrompt, user
 	if maxTokens <= 0 {
 		maxTokens = DefaultMaxTokens
 	}
-	topP := opts.TopP
-	if topP == 0 {
-		topP = DefaultTopP
-	}
-	topK := opts.TopK
-	if topK == 0 {
-		topK = DefaultTopK
-	}
 	payload := chatCompletionRequest{
 		Model: c.model,
 		Messages: []chatMessage{
@@ -199,8 +182,6 @@ func (c *Client) CompleteTextWithOptions(ctx context.Context, systemPrompt, user
 			{Role: "user", Content: userPrompt},
 		},
 		Temperature: opts.Temperature,
-		TopP:        topP,
-		TopK:        topK,
 		MaxTokens:   maxTokens,
 		ResponseFormat: responseFormat{
 			Type: "text",
@@ -258,14 +239,6 @@ func (c *Client) CompleteJSONWithOptions(ctx context.Context, systemPrompt, user
 	if maxTokens <= 0 {
 		maxTokens = DefaultMaxTokens
 	}
-	topP := opts.TopP
-	if topP == 0 {
-		topP = DefaultTopP
-	}
-	topK := opts.TopK
-	if topK == 0 {
-		topK = DefaultTopK
-	}
 	payload := chatCompletionRequest{
 		Model: c.model,
 		Messages: []chatMessage{
@@ -273,8 +246,6 @@ func (c *Client) CompleteJSONWithOptions(ctx context.Context, systemPrompt, user
 			{Role: "user", Content: userPrompt},
 		},
 		Temperature: opts.Temperature,
-		TopP:        topP,
-		TopK:        topK,
 		MaxTokens:   maxTokens,
 		ResponseFormat: responseFormat{
 			Type:   "json_object",
@@ -351,10 +322,7 @@ func (c *Client) PlanBoundary(ctx context.Context, request chunker.BoundaryReque
 			{Role: "system", Content: "You are a subtitle editor choosing a chunk boundary. Return only JSON."},
 			{Role: "user", Content: string(requestJSON)},
 		},
-		Temperature: DefaultTemperature,
-		TopP:        DefaultTopP,
-		TopK:        DefaultTopK,
-		MaxTokens:   DefaultPlannerMaxTokens,
+		MaxTokens: DefaultPlannerMaxTokens,
 		ResponseFormat: responseFormat{
 			Type:   "json_object",
 			Schema: boundarySchema(request.AllowedSplitAfterIDs),
@@ -490,9 +458,7 @@ func toBoundarySegments(segments []srt.Segment) []boundarySegment {
 type chatCompletionRequest struct {
 	Model          string         `json:"model"`
 	Messages       []chatMessage  `json:"messages"`
-	Temperature    float64        `json:"temperature"`
-	TopP           float64        `json:"top_p"`
-	TopK           int            `json:"top_k"`
+	Temperature    *float64       `json:"temperature,omitempty"`
 	MaxTokens      int            `json:"max_tokens"`
 	ResponseFormat responseFormat `json:"response_format"`
 }

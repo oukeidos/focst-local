@@ -52,9 +52,6 @@ func Extract(ctx context.Context, completer translation.TextCompleter, segments 
 			"target_language":                     cfg.TargetLang.Code,
 			"model":                               cfg.Model,
 			"base_url":                            cfg.BaseURL,
-			"temperature":                         1,
-			"top_p":                               0.95,
-			"top_k":                               64,
 			"max_tokens":                          cfg.MaxTokens,
 			"glossary_runs":                       cfg.Runs,
 			"glossary_window_chunks":              cfg.WindowChunks,
@@ -62,8 +59,6 @@ func Extract(ctx context.Context, completer translation.TextCompleter, segments 
 			"rendering_safety_filter_version":     RenderingSafetyFilterVersion,
 			"rendering_safety_filter_enabled":     true,
 			"rendering_safety_filter_temperature": DefaultRenderingSafetyTemperature,
-			"rendering_safety_filter_top_p":       DefaultRenderingSafetyTopP,
-			"rendering_safety_filter_top_k":       DefaultRenderingSafetyTopK,
 		}); err != nil {
 			return Artifact{}, translation.UsageMetadata{}, fmt.Errorf("failed to write glossary config: %w", err)
 		}
@@ -174,9 +169,6 @@ func Extract(ctx context.Context, completer translation.TextCompleter, segments 
 			Config: RunConfig{
 				Model:                cfg.Model,
 				BaseURL:              cfg.BaseURL,
-				Temperature:          1,
-				TopP:                 0.95,
-				TopK:                 64,
 				MaxTokens:            cfg.MaxTokens,
 				GlossaryRuns:         cfg.Runs,
 				GlossaryWindowChunks: cfg.WindowChunks,
@@ -216,9 +208,6 @@ func Extract(ctx context.Context, completer translation.TextCompleter, segments 
 		Config: RunConfig{
 			Model:                cfg.Model,
 			BaseURL:              cfg.BaseURL,
-			Temperature:          1,
-			TopP:                 0.95,
-			TopK:                 64,
 			MaxTokens:            cfg.MaxTokens,
 			GlossaryRuns:         cfg.Runs,
 			GlossaryWindowChunks: cfg.WindowChunks,

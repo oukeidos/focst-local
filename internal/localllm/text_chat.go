@@ -20,21 +20,20 @@ type TextChatMessage struct {
 type textChatCompletionRequest struct {
 	Model       string        `json:"model"`
 	Messages    []chatMessage `json:"messages"`
-	Temperature float64       `json:"temperature"`
-	TopP        float64       `json:"top_p"`
-	TopK        int           `json:"top_k"`
+	Temperature *float64      `json:"temperature,omitempty"`
 	MaxTokens   int           `json:"max_tokens"`
 }
 
 // CompleteTextChat sends a plain chat-completion request without response_format.
 // Phrase-anchor experiments used this exact shape for continuing chat rounds.
 func (c *Client) CompleteTextChat(ctx context.Context, messages []TextChatMessage, maxTokens int) (*translation.TextCompletion, error) {
-	return c.CompleteTextChatWithSampler(ctx, messages, maxTokens, DefaultTemperature, DefaultTopP, DefaultTopK)
+	return c.CompleteTextChatWithOptions(ctx, messages, translation.TextCompletionOptions{MaxTokens: maxTokens})
 }
 
-// CompleteTextChatWithSampler is used by helper passes that need explicit
-// sampling parameters while preserving a plain text response.
-func (c *Client) CompleteTextChatWithSampler(ctx context.Context, messages []TextChatMessage, maxTokens int, temperature, topP float64, topK int) (*translation.TextCompletion, error) {
+// CompleteTextChatWithOptions is used by helper passes that need explicit
+// request options while preserving a plain text response.
+func (c *Client) CompleteTextChatWithOptions(ctx context.Context, messages []TextChatMessage, opts translation.TextCompletionOptions) (*translation.TextCompletion, error) {
+	maxTokens := opts.MaxTokens
 	if maxTokens <= 0 {
 		maxTokens = c.maxTokens
 	}
@@ -48,9 +47,7 @@ func (c *Client) CompleteTextChatWithSampler(ctx context.Context, messages []Tex
 	payload := textChatCompletionRequest{
 		Model:       c.model,
 		Messages:    converted,
-		Temperature: temperature,
-		TopP:        topP,
-		TopK:        topK,
+		Temperature: opts.Temperature,
 		MaxTokens:   maxTokens,
 	}
 	body, err := json.Marshal(payload)

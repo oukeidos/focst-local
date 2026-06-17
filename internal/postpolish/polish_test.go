@@ -75,14 +75,14 @@ func TestRunMergesRepairOverBroadAndProtectsRenderings(t *testing.T) {
 	if client.calls != 2 {
 		t.Fatalf("client calls = %d, want 2", client.calls)
 	}
-	if client.lastTemperature != 0 || client.lastMaxTokens != 2048 {
+	if client.lastTemperature == nil || *client.lastTemperature != 0 || client.lastMaxTokens != 2048 {
 		t.Fatalf("sampler not preserved: temp=%v max=%d", client.lastTemperature, client.lastMaxTokens)
 	}
 }
 
 type fakeJSONClient struct {
 	calls           int
-	lastTemperature float64
+	lastTemperature *float64
 	lastMaxTokens   int
 }
 

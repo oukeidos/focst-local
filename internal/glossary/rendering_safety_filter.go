@@ -159,11 +159,10 @@ func ApplyRenderingSafetyFilter(
 
 func completeRenderingSafetyText(ctx context.Context, completer translation.TextCompleter, systemPrompt, userPrompt string, maxTokens int) (*translation.TextCompletion, error) {
 	if withOptions, ok := completer.(translation.TextCompleterWithOptions); ok {
+		temperature := DefaultRenderingSafetyTemperature
 		return withOptions.CompleteTextWithOptions(ctx, systemPrompt, userPrompt, translation.TextCompletionOptions{
 			MaxTokens:   maxTokens,
-			Temperature: DefaultRenderingSafetyTemperature,
-			TopP:        DefaultRenderingSafetyTopP,
-			TopK:        DefaultRenderingSafetyTopK,
+			Temperature: &temperature,
 		})
 	}
 	return completer.CompleteText(ctx, systemPrompt, userPrompt, maxTokens)

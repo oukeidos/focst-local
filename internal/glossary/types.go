@@ -18,8 +18,6 @@ const (
 	DefaultRenderingSafetyBatchSize    = 20
 	DefaultRenderingSafetySnippetLimit = 4
 	DefaultRenderingSafetyTemperature  = 0.0
-	DefaultRenderingSafetyTopP         = 0.95
-	DefaultRenderingSafetyTopK         = 64
 
 	ConfidenceHigh   = "high"
 	ConfidenceMedium = "medium"
@@ -87,14 +85,11 @@ type InputInfo struct {
 }
 
 type RunConfig struct {
-	Model                string  `json:"model"`
-	BaseURL              string  `json:"base_url"`
-	Temperature          float64 `json:"temperature"`
-	TopP                 float64 `json:"top_p"`
-	TopK                 int     `json:"top_k"`
-	MaxTokens            int     `json:"max_tokens"`
-	GlossaryRuns         int     `json:"glossary_runs"`
-	GlossaryWindowChunks int     `json:"glossary_window_chunks"`
+	Model                string `json:"model"`
+	BaseURL              string `json:"base_url"`
+	MaxTokens            int    `json:"max_tokens"`
+	GlossaryRuns         int    `json:"glossary_runs"`
+	GlossaryWindowChunks int    `json:"glossary_window_chunks"`
 }
 
 type Window struct {

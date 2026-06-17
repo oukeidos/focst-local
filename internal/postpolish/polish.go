@@ -25,11 +25,10 @@ func Run(ctx context.Context, client JSONCompleter, sourceSegments, translatedSe
 	base := makeInputs(sourceSegments, translatedSegments)
 	system := systemPrompt(cfg.TargetLanguage.Name)
 	schema := ResponseSchema()
+	temperature := DefaultTemperature
 	opts := translation.TextCompletionOptions{
 		MaxTokens:   cfg.MaxTokens,
-		Temperature: DefaultTemperature,
-		TopP:        DefaultTopP,
-		TopK:        DefaultTopK,
+		Temperature: &temperature,
 	}
 
 	logger.Info("Post-polish started",

@@ -94,9 +94,6 @@ type RunConfig struct {
 	MinChunkSize             int     `json:"min_chunk_size"`
 	MaxChunkSize             int     `json:"max_chunk_size"`
 	ChunkBoundaryPlanner     string  `json:"chunk_boundary_planner"`
-	Temperature              float64 `json:"temperature"`
-	TopP                     float64 `json:"top_p"`
-	TopK                     int     `json:"top_k"`
 	ThesisRounds             int     `json:"thesis_rounds"`
 	SynthesisVotes           int     `json:"synthesis_votes"`
 	QuoteFilterBatchSize     int     `json:"quote_filter_batch_size"`

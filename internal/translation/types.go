@@ -49,9 +49,7 @@ type TextCompletion struct {
 // TextCompletionOptions controls plain text helper requests.
 type TextCompletionOptions struct {
 	MaxTokens   int
-	Temperature float64
-	TopP        float64
-	TopK        int
+	Temperature *float64
 }
 
 // TextCompleter is implemented by local chat-completion backends that can

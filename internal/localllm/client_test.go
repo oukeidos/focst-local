@@ -118,6 +118,9 @@ func TestClient_TranslateUsesSourceTextEchoSchema(t *testing.T) {
 	if resp.Translations[0].SourceText != "alpha beta" {
 		t.Fatalf("source text = %q", resp.Translations[0].SourceText)
 	}
+	if got.Temperature != nil {
+		t.Fatalf("translation temperature should be omitted: temp=%v", got.Temperature)
+	}
 
 	props := got.ResponseFormat.Schema["properties"].(map[string]any)
 	translations := props["translations"].(map[string]any)
@@ -168,14 +171,8 @@ func TestClient_CompleteTextUsesTextResponseFormat(t *testing.T) {
 	if got.MaxTokens != 123 {
 		t.Fatalf("max tokens = %d, want 123", got.MaxTokens)
 	}
-	if got.Temperature != DefaultTemperature {
-		t.Fatalf("temperature = %v, want %v", got.Temperature, DefaultTemperature)
-	}
-	if got.TopP != DefaultTopP {
-		t.Fatalf("top_p = %v, want %v", got.TopP, DefaultTopP)
-	}
-	if got.TopK != DefaultTopK {
-		t.Fatalf("top_k = %v, want %v", got.TopK, DefaultTopK)
+	if got.Temperature != nil {
+		t.Fatalf("text completion temperature should be omitted: temp=%v", got.Temperature)
 	}
 }
 
@@ -197,23 +194,16 @@ func TestClient_CompleteTextWithOptionsPreservesZeroTemperature(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL+"/v1", "test-model")
+	temperature := 0.0
 	_, err := client.CompleteTextWithOptions(context.Background(), "system", "user", translation.TextCompletionOptions{
 		MaxTokens:   2048,
-		Temperature: 0.0,
-		TopP:        0.95,
-		TopK:        64,
+		Temperature: &temperature,
 	})
 	if err != nil {
 		t.Fatalf("CompleteTextWithOptions failed: %v", err)
 	}
-	if got.Temperature != 0.0 {
+	if got.Temperature == nil || *got.Temperature != 0.0 {
 		t.Fatalf("temperature = %v, want 0.0", got.Temperature)
-	}
-	if got.TopP != 0.95 {
-		t.Fatalf("top_p = %v, want 0.95", got.TopP)
-	}
-	if got.TopK != 64 {
-		t.Fatalf("top_k = %v, want 64", got.TopK)
 	}
 	if got.MaxTokens != 2048 {
 		t.Fatalf("max_tokens = %d, want 2048", got.MaxTokens)
@@ -245,11 +235,10 @@ func TestClient_CompleteJSONWithOptionsUsesSchemaAndSampler(t *testing.T) {
 		"required": []string{"corrections"},
 	}
 	client := NewClient(server.URL+"/v1", "test-model")
+	temperature := 0.0
 	resp, err := client.CompleteJSONWithOptions(context.Background(), "system", "user", schema, translation.TextCompletionOptions{
 		MaxTokens:   2048,
-		Temperature: 0.0,
-		TopP:        0.95,
-		TopK:        64,
+		Temperature: &temperature,
 	})
 	if err != nil {
 		t.Fatalf("CompleteJSONWithOptions failed: %v", err)
@@ -267,12 +256,12 @@ func TestClient_CompleteJSONWithOptionsUsesSchemaAndSampler(t *testing.T) {
 	if !ok || !reflect.DeepEqual(required, []any{"corrections"}) {
 		t.Fatalf("schema required = %+v, want corrections", got.ResponseFormat.Schema["required"])
 	}
-	if got.Temperature != 0.0 || got.TopP != 0.95 || got.TopK != 64 || got.MaxTokens != 2048 {
-		t.Fatalf("sampler mismatch: temp=%v top_p=%v top_k=%d max=%d", got.Temperature, got.TopP, got.TopK, got.MaxTokens)
+	if got.Temperature == nil || *got.Temperature != 0.0 || got.MaxTokens != 2048 {
+		t.Fatalf("sampler mismatch: temp=%v max=%d", got.Temperature, got.MaxTokens)
 	}
 }
 
-func TestClient_CompleteTextChatWithSamplerOmitsResponseFormat(t *testing.T) {
+func TestClient_CompleteTextChatWithOptionsOmitsResponseFormat(t *testing.T) {
 	var got map[string]any
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/chat/completions" {
@@ -290,12 +279,16 @@ func TestClient_CompleteTextChatWithSamplerOmitsResponseFormat(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(server.URL+"/v1", "test-model")
-	resp, err := client.CompleteTextChatWithSampler(context.Background(), []TextChatMessage{
+	temperature := 0.0
+	resp, err := client.CompleteTextChatWithOptions(context.Background(), []TextChatMessage{
 		{Role: "system", Content: "system prompt"},
 		{Role: "user", Content: "user prompt"},
-	}, 2048, 0, 0.95, 64)
+	}, translation.TextCompletionOptions{
+		MaxTokens:   2048,
+		Temperature: &temperature,
+	})
 	if err != nil {
-		t.Fatalf("CompleteTextChatWithSampler failed: %v", err)
+		t.Fatalf("CompleteTextChatWithOptions failed: %v", err)
 	}
 	if resp.Usage.TotalTokenCount != 11 {
 		t.Fatalf("unexpected usage: %+v", resp.Usage)
@@ -309,11 +302,11 @@ func TestClient_CompleteTextChatWithSamplerOmitsResponseFormat(t *testing.T) {
 	if got["temperature"].(float64) != 0 {
 		t.Fatalf("temperature = %+v, want 0", got["temperature"])
 	}
-	if got["top_p"].(float64) != 0.95 {
-		t.Fatalf("top_p = %+v, want 0.95", got["top_p"])
+	if _, ok := got["top_p"]; ok {
+		t.Fatalf("top_p should be omitted: %+v", got["top_p"])
 	}
-	if got["top_k"].(float64) != 64 {
-		t.Fatalf("top_k = %+v, want 64", got["top_k"])
+	if _, ok := got["top_k"]; ok {
+		t.Fatalf("top_k should be omitted: %+v", got["top_k"])
 	}
 	messages := got["messages"].([]any)
 	if len(messages) != 2 || messages[0].(map[string]any)["role"] != "system" || messages[1].(map[string]any)["role"] != "user" {
@@ -361,6 +354,9 @@ func TestClient_PlanBoundary(t *testing.T) {
 	}
 	if got.MaxTokens != DefaultPlannerMaxTokens {
 		t.Fatalf("max tokens = %d, want %d", got.MaxTokens, DefaultPlannerMaxTokens)
+	}
+	if got.Temperature != nil {
+		t.Fatalf("boundary planner temperature should be omitted: temp=%v", got.Temperature)
 	}
 	if len(got.Messages) != 2 || got.Messages[0].Role != "system" || got.Messages[1].Role != "user" {
 		t.Fatalf("unexpected messages: %+v", got.Messages)

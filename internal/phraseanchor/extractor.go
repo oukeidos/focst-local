@@ -23,7 +23,7 @@ import (
 type Client interface {
 	CompleteText(ctx context.Context, systemPrompt, userPrompt string, maxTokens int) (*translation.TextCompletion, error)
 	CompleteTextChat(ctx context.Context, messages []localllm.TextChatMessage, maxTokens int) (*translation.TextCompletion, error)
-	CompleteTextChatWithSampler(ctx context.Context, messages []localllm.TextChatMessage, maxTokens int, temperature, topP float64, topK int) (*translation.TextCompletion, error)
+	CompleteTextChatWithOptions(ctx context.Context, messages []localllm.TextChatMessage, opts translation.TextCompletionOptions) (*translation.TextCompletion, error)
 }
 
 func Extract(ctx context.Context, client Client, segments []srt.Segment, plan chunker.ChunkPlan, cfg ExtractConfig) (Artifact, translation.UsageMetadata, error) {
@@ -255,7 +255,11 @@ func runQuoteKindFilter(ctx context.Context, client Client, candidates []Candida
 				return nil, nil, usage, err
 			}
 		}
-		resp, err := client.CompleteTextChatWithSampler(ctx, []localllm.TextChatMessage{{Role: "user", Content: prompt}}, QuoteKindFilterMaxTokens, QuoteKindFilterTemperature, localllm.DefaultTopP, localllm.DefaultTopK)
+		temperature := QuoteKindFilterTemperature
+		resp, err := client.CompleteTextChatWithOptions(ctx, []localllm.TextChatMessage{{Role: "user", Content: prompt}}, translation.TextCompletionOptions{
+			MaxTokens:   QuoteKindFilterMaxTokens,
+			Temperature: &temperature,
+		})
 		if err != nil {
 			return nil, nil, usage, fmt.Errorf("%s failed: %w", stage, err)
 		}
@@ -680,9 +684,6 @@ func runConfig(cfg ExtractConfig) RunConfig {
 		MinChunkSize:             cfg.MinChunkSize,
 		MaxChunkSize:             cfg.MaxChunkSize,
 		ChunkBoundaryPlanner:     cfg.ChunkBoundaryPlanner,
-		Temperature:              localllm.DefaultTemperature,
-		TopP:                     localllm.DefaultTopP,
-		TopK:                     localllm.DefaultTopK,
 		ThesisRounds:             cfg.ThesisRounds,
 		SynthesisVotes:           cfg.SynthesisVotes,
 		QuoteFilterBatchSize:     cfg.QuoteFilterBatchSize,

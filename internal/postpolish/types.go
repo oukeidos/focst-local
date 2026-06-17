@@ -11,8 +11,6 @@ const (
 	DefaultRepairChunkSize = 100
 	DefaultMaxTokens       = 2048
 	DefaultTemperature     = 0.0
-	DefaultTopP            = 0.95
-	DefaultTopK            = 64
 
 	PassBroad  = "pass_broad"
 	PassRepair = "pass_repair"

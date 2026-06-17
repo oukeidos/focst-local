@@ -84,7 +84,7 @@ func TestExtractWritesDebugArtifacts(t *testing.T) {
 	if len(completer.options) != 1 {
 		t.Fatalf("filter option calls = %d, want 1", len(completer.options))
 	}
-	if completer.options[0].Temperature != DefaultRenderingSafetyTemperature {
+	if completer.options[0].Temperature == nil || *completer.options[0].Temperature != DefaultRenderingSafetyTemperature {
 		t.Fatalf("filter temperature = %v, want %v", completer.options[0].Temperature, DefaultRenderingSafetyTemperature)
 	}
 	for _, rel := range []string{
