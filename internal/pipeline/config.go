@@ -81,12 +81,18 @@ type Config struct {
 	// Optional post-translation polish. This is independent from glossary,
 	// names, and phrase anchors; mappings are used only as a protection guard
 	// when available.
-	PostPolish                bool
-	SavePolishCorrectionsPath string
-	PolishArtifactsDir        string
-	PolishBroadChunkSize      int
-	PolishRepairChunkSize     int
-	PolishMaxTokens           int
+	PostPolish                 bool
+	PostPolishProfile          string
+	SavePolishCorrectionsPath  string
+	PolishArtifactsDir         string
+	PolishBroadChunkSize       int
+	PolishRepairChunkSize      int
+	PolishMaxTokens            int
+	PolishChunkSize            int
+	PolishMinChunkSize         int
+	PolishMaxChunkSize         int
+	PolishSentenceAwareChunks  bool
+	PolishChunkBoundaryPlanner string
 
 	// Callbacks
 	// OnProgress is called with translation progress updates.
@@ -152,6 +158,9 @@ func (c Config) Normalize() (Config, []string) {
 	if c.PhraseAnchorProperFilterWindowChunks <= 0 {
 		c.PhraseAnchorProperFilterWindowChunks = phraseanchor.DefaultProperFilterWindowChunks
 	}
+	if profile, ok := postpolish.NormalizeProfile(c.PostPolishProfile); ok {
+		c.PostPolishProfile = string(profile)
+	}
 	if c.PolishBroadChunkSize <= 0 {
 		c.PolishBroadChunkSize = postpolish.DefaultBroadChunkSize
 	}
@@ -159,7 +168,24 @@ func (c Config) Normalize() (Config, []string) {
 		c.PolishRepairChunkSize = postpolish.DefaultRepairChunkSize
 	}
 	if c.PolishMaxTokens <= 0 {
-		c.PolishMaxTokens = postpolish.DefaultMaxTokens
+		if c.PostPolishProfile == string(postpolish.ProfileLegacy) {
+			c.PolishMaxTokens = postpolish.DefaultLegacyMaxTokens
+		} else {
+			c.PolishMaxTokens = postpolish.DefaultV2MaxTokens
+		}
+	}
+	if c.PolishChunkSize <= 0 {
+		c.PolishChunkSize = postpolish.DefaultV2ChunkSize
+	}
+	if c.PolishMinChunkSize <= 0 {
+		c.PolishMinChunkSize = postpolish.DefaultV2MinChunkSize
+	}
+	if c.PolishMaxChunkSize <= 0 {
+		c.PolishMaxChunkSize = postpolish.DefaultV2MaxChunkSize
+	}
+	if c.PolishChunkBoundaryPlanner == "" {
+		c.PolishChunkBoundaryPlanner = postpolish.DefaultV2BoundaryPlanner
+		c.PolishSentenceAwareChunks = postpolish.DefaultV2SentenceAware
 	}
 	if c.LlamaServer.ModelAlias == "" {
 		c.LlamaServer.ModelAlias = c.Model
@@ -259,6 +285,9 @@ func (c Config) Validate() error {
 	if c.SavePolishCorrectionsPath != "" && !c.PostPolish {
 		return fmt.Errorf("--save-polish-corrections requires --post-polish")
 	}
+	if _, ok := postpolish.NormalizeProfile(c.PostPolishProfile); !ok {
+		return fmt.Errorf("invalid post-polish profile: %s", c.PostPolishProfile)
+	}
 	if c.PolishBroadChunkSize <= 0 {
 		return fmt.Errorf("polishBroadChunkSize must be greater than 0, got %d", c.PolishBroadChunkSize)
 	}
@@ -267,6 +296,26 @@ func (c Config) Validate() error {
 	}
 	if c.PolishMaxTokens <= 0 {
 		return fmt.Errorf("polishMaxTokens must be greater than 0, got %d", c.PolishMaxTokens)
+	}
+	if c.PolishChunkSize <= 0 {
+		return fmt.Errorf("polishChunkSize must be greater than 0, got %d", c.PolishChunkSize)
+	}
+	if c.PolishMinChunkSize <= 0 {
+		return fmt.Errorf("polishMinChunkSize must be greater than 0, got %d", c.PolishMinChunkSize)
+	}
+	if c.PolishMaxChunkSize <= 0 {
+		return fmt.Errorf("polishMaxChunkSize must be greater than 0, got %d", c.PolishMaxChunkSize)
+	}
+	if c.PolishMinChunkSize > c.PolishMaxChunkSize {
+		return fmt.Errorf("polishMinChunkSize must be <= polishMaxChunkSize, got %d > %d", c.PolishMinChunkSize, c.PolishMaxChunkSize)
+	}
+	if c.PolishChunkSize < c.PolishMinChunkSize || c.PolishChunkSize > c.PolishMaxChunkSize {
+		return fmt.Errorf("polishChunkSize must be inside polish sentence-aware range, got polishChunkSize=%d range=%d..%d", c.PolishChunkSize, c.PolishMinChunkSize, c.PolishMaxChunkSize)
+	}
+	switch c.PolishChunkBoundaryPlanner {
+	case ChunkBoundaryPlannerOff, ChunkBoundaryPlannerDeterministic, ChunkBoundaryPlannerLocalLLM:
+	default:
+		return fmt.Errorf("invalid polish chunk boundary planner: %s", c.PolishChunkBoundaryPlanner)
 	}
 	if c.BaseURL == "" {
 		return fmt.Errorf("llama base URL is required")
@@ -312,5 +361,15 @@ func (c Config) ChunkPlanOptions() chunker.PlanOptions {
 		MaxSize:             c.MaxChunkSize,
 		ContextSize:         c.ContextSize,
 		EnableSentenceAware: c.SentenceAwareChunks && c.ChunkBoundaryPlanner != ChunkBoundaryPlannerOff,
+	}
+}
+
+func (c Config) PolishChunkPlanOptions() chunker.PlanOptions {
+	return chunker.PlanOptions{
+		NominalSize:         c.PolishChunkSize,
+		MinSize:             c.PolishMinChunkSize,
+		MaxSize:             c.PolishMaxChunkSize,
+		ContextSize:         0,
+		EnableSentenceAware: c.PolishSentenceAwareChunks && c.PolishChunkBoundaryPlanner != ChunkBoundaryPlannerOff,
 	}
 }

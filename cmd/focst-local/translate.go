@@ -51,11 +51,17 @@ type translateOptions struct {
 	phraseAnchorProperFilterRuns         int
 	phraseAnchorProperFilterWindowChunks int
 	postPolish                           bool
+	postPolishProfile                    string
 	savePolishCorrectionsPath            string
 	polishArtifactsDir                   string
 	polishBroadChunkSize                 int
 	polishRepairChunkSize                int
 	polishMaxTokens                      int
+	polishChunkSize                      int
+	polishMinChunkSize                   int
+	polishMaxChunkSize                   int
+	noPolishSentenceAwareChunks          bool
+	polishChunkBoundaryPlanner           string
 	noPreprocess                         bool
 	noPostprocess                        bool
 	noLangPreprocess                     bool
@@ -117,11 +123,17 @@ func addTranslateFlags(cmd *cobra.Command, opts *translateOptions) {
 	cmd.Flags().IntVar(&opts.phraseAnchorProperFilterRuns, "phrase-anchor-proper-filter-runs", phraseanchor.DefaultProperFilterRuns, "Number of phrase anchor source-name filter runs")
 	cmd.Flags().IntVar(&opts.phraseAnchorProperFilterWindowChunks, "phrase-anchor-proper-filter-window-chunks", phraseanchor.DefaultProperFilterWindowChunks, "Number of translation chunks per phrase anchor source-name filter window")
 	cmd.Flags().BoolVar(&opts.postPolish, "post-polish", false, "Run experimental local post-translation polish after successful translation")
+	cmd.Flags().StringVar(&opts.postPolishProfile, "post-polish-profile", string(postpolish.ProfileSegmentLocal), "Post-polish profile: segment-local, chunk-flow, or legacy")
 	cmd.Flags().StringVar(&opts.savePolishCorrectionsPath, "save-polish-corrections", "", "Path to save accepted/rejected post-polish corrections JSON")
 	cmd.Flags().StringVar(&opts.polishArtifactsDir, "polish-artifacts", "", "Directory for post-polish debug artifacts")
 	cmd.Flags().IntVar(&opts.polishBroadChunkSize, "polish-broad-chunk-size", postpolish.DefaultBroadChunkSize, "Segments per broad post-polish request")
 	cmd.Flags().IntVar(&opts.polishRepairChunkSize, "polish-repair-chunk-size", postpolish.DefaultRepairChunkSize, "Segments per repair post-polish request")
-	cmd.Flags().IntVar(&opts.polishMaxTokens, "polish-max-tokens", postpolish.DefaultMaxTokens, "Maximum generated tokens per post-polish request")
+	cmd.Flags().IntVar(&opts.polishMaxTokens, "polish-max-tokens", 0, "Maximum generated tokens per post-polish request (default: profile-specific)")
+	cmd.Flags().IntVar(&opts.polishChunkSize, "polish-chunk-size", postpolish.DefaultV2ChunkSize, "Target chunk size for v2 post-polish profiles")
+	cmd.Flags().IntVar(&opts.polishMinChunkSize, "polish-min-chunk-size", postpolish.DefaultV2MinChunkSize, "Minimum chunk size for v2 sentence-aware post-polish planning")
+	cmd.Flags().IntVar(&opts.polishMaxChunkSize, "polish-max-chunk-size", postpolish.DefaultV2MaxChunkSize, "Maximum chunk size for v2 sentence-aware post-polish planning")
+	cmd.Flags().BoolVar(&opts.noPolishSentenceAwareChunks, "no-polish-sentence-aware-chunks", false, "Use fixed-size chunks for v2 post-polish profiles")
+	cmd.Flags().StringVar(&opts.polishChunkBoundaryPlanner, "polish-chunk-boundary-planner", pipeline.ChunkBoundaryPlannerLocalLLM, "Post-polish boundary planner: local-llm, deterministic, or off")
 	cmd.Flags().BoolVar(&opts.noPreprocess, "no-preprocess", false, "Disable all preprocessing (bracket removal, symbol filtering)")
 	cmd.Flags().BoolVar(&opts.noLangPreprocess, "no-lang-preprocess", false, "Disable language-specific preprocessing only")
 	cmd.Flags().BoolVar(&opts.noPostprocess, "no-postprocess", false, "Disable all post-processing (punctuation, timing correction)")
@@ -177,6 +189,9 @@ func runTranslate(cmd *cobra.Command, args []string, opts *translateOptions) err
 	if err != nil {
 		return err
 	}
+	if err := validatePostPolishProfileFlags(cmd, opts.postPolishProfile, opts.postPolish); err != nil {
+		return err
+	}
 
 	cfg := pipeline.Config{
 		InputPath:                            args[0],
@@ -219,11 +234,17 @@ func runTranslate(cmd *cobra.Command, args []string, opts *translateOptions) err
 		PhraseAnchorProperFilterRuns:         opts.phraseAnchorProperFilterRuns,
 		PhraseAnchorProperFilterWindowChunks: opts.phraseAnchorProperFilterWindowChunks,
 		PostPolish:                           opts.postPolish,
+		PostPolishProfile:                    opts.postPolishProfile,
 		SavePolishCorrectionsPath:            opts.savePolishCorrectionsPath,
 		PolishArtifactsDir:                   opts.polishArtifactsDir,
 		PolishBroadChunkSize:                 opts.polishBroadChunkSize,
 		PolishRepairChunkSize:                opts.polishRepairChunkSize,
 		PolishMaxTokens:                      opts.polishMaxTokens,
+		PolishChunkSize:                      opts.polishChunkSize,
+		PolishMinChunkSize:                   opts.polishMinChunkSize,
+		PolishMaxChunkSize:                   opts.polishMaxChunkSize,
+		PolishSentenceAwareChunks:            !opts.noPolishSentenceAwareChunks && opts.polishChunkBoundaryPlanner != pipeline.ChunkBoundaryPlannerOff,
+		PolishChunkBoundaryPlanner:           opts.polishChunkBoundaryPlanner,
 		OnProgress: func(p translator.TranslationProgress) {
 			switch p.State {
 			case translator.StateCompleted:

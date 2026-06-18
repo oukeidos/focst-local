@@ -184,15 +184,33 @@ func TestPhraseAnchorFlags_RejectAmbiguousAutoAndFile(t *testing.T) {
 func TestPostPolishFlags_Parse(t *testing.T) {
 	cases := [][]string{
 		{"--post-polish"},
+		{"--post-polish-profile", "segment-local"},
+		{"--post-polish-profile", "chunk-flow"},
+		{"--post-polish-profile", "legacy"},
 		{"--save-polish-corrections", "out.polish.json"},
 		{"--polish-artifacts", "out.polish"},
 		{"--polish-broad-chunk-size", "30"},
 		{"--polish-repair-chunk-size", "100"},
 		{"--polish-max-tokens", "2048"},
+		{"--polish-chunk-size", "8"},
+		{"--polish-min-chunk-size", "5"},
+		{"--polish-max-chunk-size", "9"},
+		{"--no-polish-sentence-aware-chunks"},
+		{"--polish-chunk-boundary-planner", "deterministic"},
 		{"translate", "--post-polish"},
+		{"translate", "--post-polish-profile", "chunk-flow"},
+		{"translate", "--polish-chunk-size", "8"},
+		{"polish", "--post-polish-profile", "segment-local"},
+		{"polish", "--post-polish-profile", "chunk-flow"},
+		{"polish", "--post-polish-profile", "legacy"},
 		{"polish", "--polish-broad-chunk-size", "30"},
 		{"polish", "--polish-repair-chunk-size", "100"},
 		{"polish", "--polish-max-tokens", "2048"},
+		{"polish", "--polish-chunk-size", "8"},
+		{"polish", "--polish-min-chunk-size", "5"},
+		{"polish", "--polish-max-chunk-size", "9"},
+		{"polish", "--no-polish-sentence-aware-chunks"},
+		{"polish", "--polish-chunk-boundary-planner", "deterministic"},
 	}
 	for _, args := range cases {
 		t.Run(strings.Join(args, "_"), func(t *testing.T) {
@@ -204,6 +222,38 @@ func TestPostPolishFlags_Parse(t *testing.T) {
 				t.Fatalf("expected post-polish flag to parse, got output: %s", out)
 			}
 		})
+	}
+}
+
+func TestPostPolishFlags_RejectInvalidProfile(t *testing.T) {
+	_, err := executeCommand(t,
+		"translate",
+		"input.srt",
+		"output.srt",
+		"--post-polish-profile", "auto",
+	)
+	if err == nil {
+		t.Fatalf("expected invalid profile error")
+	}
+	if !strings.Contains(err.Error(), "invalid post-polish profile: auto") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestPostPolishFlags_RejectLegacyChunkSizesForV2Profiles(t *testing.T) {
+	_, err := executeCommand(t,
+		"translate",
+		"input.srt",
+		"output.srt",
+		"--post-polish",
+		"--post-polish-profile", "segment-local",
+		"--polish-broad-chunk-size", "20",
+	)
+	if err == nil {
+		t.Fatalf("expected legacy chunk size error")
+	}
+	if !strings.Contains(err.Error(), "only supported with --post-polish-profile legacy") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

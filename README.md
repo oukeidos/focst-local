@@ -198,10 +198,20 @@ save and inspect artifacts for important jobs.
 
 ### Post-Translation Polish
 
-`focst-local` can run an optional local polish pass after translation. It runs
-two conservative correction prompts on the translated subtitle text and merges
-their corrections. This can fix some awkward target-language phrasing,
-typo-like output, and minor subtitle readability problems.
+`focst-local` can run an optional local polish pass after translation. It asks
+the local model to improve target-language phrasing after the main translation
+has already completed. This is experimental and should be treated as a
+comparison tool, not a guaranteed quality upgrade.
+
+Post-polish has explicit profiles:
+
+- `segment-local`: prefers local segment fidelity. This is the default for
+  `--post-polish` and is the safer profile when each subtitle ID should stay
+  close to its own source line.
+- `chunk-flow`: prefers cross-segment sentence flow. It can help when one
+  sentence often spans several subtitle IDs, but it is more aggressive and may
+  over-edit.
+- `legacy`: uses the older correction-only two-pass polish implementation.
 
 Use `--post-polish`:
 
@@ -212,8 +222,11 @@ Use `--post-polish`:
   --post-polish
 ```
 
+Use `--post-polish-profile chunk-flow` or `--post-polish-profile legacy` when
+you want a non-default profile.
+
 Add `--save-polish-corrections corrections.polish.json` when you want to keep
-the accepted/rejected correction artifact.
+the polish artifact.
 
 To inspect or reuse an existing translation first, split the workflow:
 
@@ -231,10 +244,9 @@ Post-polish works without glossary or names. When glossary or names mappings
 are available, they are used as a protective guard so polish candidates do not
 remove protected renderings.
 
-Known limits: this is experimental and can still make bad edits. In particular,
-sentences split across multiple subtitle IDs may be polished only partially,
-which can make adjacent subtitles less natural or less faithful. Save and
-inspect outputs for important jobs.
+Known limits: post-polish can still make bad edits. In particular, subtitles
+whose meaning is spread across multiple IDs can be difficult to polish safely.
+Save and inspect outputs for important jobs.
 
 ## Local Runtime Flags
 

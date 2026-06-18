@@ -388,9 +388,35 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 				logger.Info("Post-processing skipped")
 			}
 			if cfg.PostPolish {
+				polishProfile, _ := postpolish.NormalizeProfile(cfg.PostPolishProfile)
+				var polishPlan chunker.ChunkPlan
+				if postpolish.NeedsChunkPlan(polishProfile) {
+					var polishBoundaryPlanner chunker.BoundaryPlanner
+					if cfg.PolishSentenceAwareChunks && cfg.PolishChunkBoundaryPlanner == ChunkBoundaryPlannerLocalLLM {
+						polishBoundaryPlanner = client
+					}
+					_, plan, err := chunker.PlanChunks(ctx, segments, cfg.PolishChunkPlanOptions(), polishBoundaryPlanner)
+					if err != nil {
+						return result, fmt.Errorf("failed to plan post-polish chunks: %w", err)
+					}
+					polishPlan = plan
+					logger.Info("Post-polish chunk plan ready",
+						"event", "post_polish_chunk_plan_ready",
+						"profile", polishProfile,
+						"chunks", len(polishPlan.Chunks),
+						"chunk_size", cfg.PolishChunkSize,
+						"sentence_aware_chunks", cfg.PolishSentenceAwareChunks,
+						"chunk_boundary_planner", cfg.PolishChunkBoundaryPlanner,
+					)
+				}
 				polishResult, err := postpolish.Run(ctx, client, segments, outSegments, postpolish.Config{
 					SourceLanguage:      srcLang,
 					TargetLanguage:      tgtLang,
+					Model:               cfg.Model,
+					BaseURL:             cfg.BaseURL,
+					Profile:             polishProfile,
+					ChunkPlan:           polishPlan,
+					ChunkSize:           cfg.PolishChunkSize,
 					BroadChunkSize:      cfg.PolishBroadChunkSize,
 					RepairChunkSize:     cfg.PolishRepairChunkSize,
 					MaxTokens:           cfg.PolishMaxTokens,

@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/oukeidos/focst-local/internal/chunker"
 	"github.com/oukeidos/focst-local/internal/cleanup"
 	"github.com/oukeidos/focst-local/internal/files"
 	"github.com/oukeidos/focst-local/internal/glossary"
@@ -13,6 +14,7 @@ import (
 	"github.com/oukeidos/focst-local/internal/llamaserver"
 	"github.com/oukeidos/focst-local/internal/localllm"
 	"github.com/oukeidos/focst-local/internal/logger"
+	"github.com/oukeidos/focst-local/internal/pipeline"
 	"github.com/oukeidos/focst-local/internal/postpolish"
 	"github.com/oukeidos/focst-local/internal/prompt"
 	"github.com/oukeidos/focst-local/internal/srt"
@@ -20,24 +22,30 @@ import (
 )
 
 type polishOptions struct {
-	modelName                 string
-	baseURL                   string
-	translationTimeout        time.Duration
-	sourceLangCode            string
-	targetLangCode            string
-	namesPath                 string
-	glossaryFilePath          string
-	savePolishCorrectionsPath string
-	polishArtifactsDir        string
-	polishBroadChunkSize      int
-	polishRepairChunkSize     int
-	polishMaxTokens           int
-	logFilePath               string
-	yes                       bool
-	noPreprocess              bool
-	noLangPreprocess          bool
-	debug                     bool
-	llama                     llamaServerOptions
+	modelName                   string
+	baseURL                     string
+	translationTimeout          time.Duration
+	sourceLangCode              string
+	targetLangCode              string
+	namesPath                   string
+	glossaryFilePath            string
+	postPolishProfile           string
+	savePolishCorrectionsPath   string
+	polishArtifactsDir          string
+	polishBroadChunkSize        int
+	polishRepairChunkSize       int
+	polishMaxTokens             int
+	polishChunkSize             int
+	polishMinChunkSize          int
+	polishMaxChunkSize          int
+	noPolishSentenceAwareChunks bool
+	polishChunkBoundaryPlanner  string
+	logFilePath                 string
+	yes                         bool
+	noPreprocess                bool
+	noLangPreprocess            bool
+	debug                       bool
+	llama                       llamaServerOptions
 }
 
 func newPolishCmd() *cobra.Command {
@@ -67,11 +75,17 @@ func addPolishFlags(cmd *cobra.Command, opts *polishOptions) {
 	cmd.Flags().StringVar(&opts.targetLangCode, "target", "ko", "Target language code (default: ko)")
 	cmd.Flags().StringVar(&opts.namesPath, "names", "", "Path to character name mapping JSON file")
 	cmd.Flags().StringVar(&opts.glossaryFilePath, "glossary-file", "", "Path to an existing local glossary JSON file to use as a polish guard")
+	cmd.Flags().StringVar(&opts.postPolishProfile, "post-polish-profile", string(postpolish.ProfileSegmentLocal), "Post-polish profile: segment-local, chunk-flow, or legacy")
 	cmd.Flags().StringVar(&opts.savePolishCorrectionsPath, "save-polish-corrections", "", "Path to save accepted/rejected post-polish corrections JSON")
 	cmd.Flags().StringVar(&opts.polishArtifactsDir, "polish-artifacts", "", "Directory for post-polish debug artifacts")
 	cmd.Flags().IntVar(&opts.polishBroadChunkSize, "polish-broad-chunk-size", postpolish.DefaultBroadChunkSize, "Segments per broad post-polish request")
 	cmd.Flags().IntVar(&opts.polishRepairChunkSize, "polish-repair-chunk-size", postpolish.DefaultRepairChunkSize, "Segments per repair post-polish request")
-	cmd.Flags().IntVar(&opts.polishMaxTokens, "polish-max-tokens", postpolish.DefaultMaxTokens, "Maximum generated tokens per post-polish request")
+	cmd.Flags().IntVar(&opts.polishMaxTokens, "polish-max-tokens", 0, "Maximum generated tokens per post-polish request (default: profile-specific)")
+	cmd.Flags().IntVar(&opts.polishChunkSize, "polish-chunk-size", postpolish.DefaultV2ChunkSize, "Target chunk size for v2 post-polish profiles")
+	cmd.Flags().IntVar(&opts.polishMinChunkSize, "polish-min-chunk-size", postpolish.DefaultV2MinChunkSize, "Minimum chunk size for v2 sentence-aware post-polish planning")
+	cmd.Flags().IntVar(&opts.polishMaxChunkSize, "polish-max-chunk-size", postpolish.DefaultV2MaxChunkSize, "Maximum chunk size for v2 sentence-aware post-polish planning")
+	cmd.Flags().BoolVar(&opts.noPolishSentenceAwareChunks, "no-polish-sentence-aware-chunks", false, "Use fixed-size chunks for v2 post-polish profiles")
+	cmd.Flags().StringVar(&opts.polishChunkBoundaryPlanner, "polish-chunk-boundary-planner", pipeline.ChunkBoundaryPlannerLocalLLM, "Post-polish boundary planner: local-llm, deterministic, or off")
 	cmd.Flags().StringVar(&opts.logFilePath, "log-file", "", "Path to save machine-readable JSONL logs")
 	cmd.Flags().BoolVarP(&opts.yes, "yes", "y", false, "Overwrite output file without asking")
 	cmd.Flags().BoolVar(&opts.noPreprocess, "no-preprocess", false, "Disable all preprocessing")
@@ -85,6 +99,9 @@ func runPolish(cmd *cobra.Command, args []string, opts *polishOptions) error {
 		return err
 	}
 	if err := validateSubtitleExtension("source", args[0]); err != nil {
+		return err
+	}
+	if err := validatePostPolishProfileFlags(cmd, opts.postPolishProfile, true); err != nil {
 		return err
 	}
 	for _, path := range []string{args[2], opts.logFilePath, opts.glossaryFilePath, opts.savePolishCorrectionsPath, opts.polishArtifactsDir} {
@@ -188,10 +205,50 @@ func runPolish(cmd *cobra.Command, args []string, opts *polishOptions) error {
 	client := localllm.NewClient(server.BaseURL, launchCfg.ModelAlias)
 	client.SetTranslationTimeout(opts.translationTimeout)
 
+	profile, _ := postpolish.NormalizeProfile(opts.postPolishProfile)
+	var polishPlan chunker.ChunkPlan
+	if postpolish.NeedsChunkPlan(profile) {
+		if opts.polishChunkSize <= 0 {
+			return fmt.Errorf("polish chunk size must be greater than 0")
+		}
+		if opts.polishMinChunkSize <= 0 || opts.polishMaxChunkSize <= 0 || opts.polishMinChunkSize > opts.polishMaxChunkSize {
+			return fmt.Errorf("invalid polish chunk range: %d..%d", opts.polishMinChunkSize, opts.polishMaxChunkSize)
+		}
+		if opts.polishChunkSize < opts.polishMinChunkSize || opts.polishChunkSize > opts.polishMaxChunkSize {
+			return fmt.Errorf("polish chunk size must be inside polish sentence-aware range, got %d range=%d..%d", opts.polishChunkSize, opts.polishMinChunkSize, opts.polishMaxChunkSize)
+		}
+		switch opts.polishChunkBoundaryPlanner {
+		case pipeline.ChunkBoundaryPlannerOff, pipeline.ChunkBoundaryPlannerDeterministic, pipeline.ChunkBoundaryPlannerLocalLLM:
+		default:
+			return fmt.Errorf("invalid polish chunk boundary planner: %s", opts.polishChunkBoundaryPlanner)
+		}
+		planOptions := chunker.PlanOptions{
+			NominalSize:         opts.polishChunkSize,
+			MinSize:             opts.polishMinChunkSize,
+			MaxSize:             opts.polishMaxChunkSize,
+			ContextSize:         0,
+			EnableSentenceAware: !opts.noPolishSentenceAwareChunks && opts.polishChunkBoundaryPlanner != pipeline.ChunkBoundaryPlannerOff,
+		}
+		var boundaryPlanner chunker.BoundaryPlanner
+		if planOptions.EnableSentenceAware && opts.polishChunkBoundaryPlanner == pipeline.ChunkBoundaryPlannerLocalLLM {
+			boundaryPlanner = client
+		}
+		_, plan, err := chunker.PlanChunks(ctx, sourceSegments, planOptions, boundaryPlanner)
+		if err != nil {
+			return fmt.Errorf("failed to plan post-polish chunks: %w", err)
+		}
+		polishPlan = plan
+	}
+
 	started := time.Now()
 	result, err := postpolish.Run(ctx, client, sourceSegments, translatedSegments, postpolish.Config{
 		SourceLanguage:      srcLang,
 		TargetLanguage:      tgtLang,
+		Model:               launchCfg.ModelAlias,
+		BaseURL:             server.BaseURL,
+		Profile:             profile,
+		ChunkPlan:           polishPlan,
+		ChunkSize:           opts.polishChunkSize,
 		BroadChunkSize:      opts.polishBroadChunkSize,
 		RepairChunkSize:     opts.polishRepairChunkSize,
 		MaxTokens:           opts.polishMaxTokens,

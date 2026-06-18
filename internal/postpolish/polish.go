@@ -19,6 +19,19 @@ type JSONCompleter interface {
 
 func Run(ctx context.Context, client JSONCompleter, sourceSegments, translatedSegments []srt.Segment, cfg Config) (Result, error) {
 	cfg = normalizeConfig(cfg)
+	switch cfg.Profile {
+	case ProfileLegacy:
+		return runLegacy(ctx, client, sourceSegments, translatedSegments, cfg)
+	case ProfileSegmentLocal:
+		return runSegmentLocal(ctx, client, sourceSegments, translatedSegments, cfg)
+	case ProfileChunkFlow:
+		return runChunkFlow(ctx, client, sourceSegments, translatedSegments, cfg)
+	default:
+		return Result{}, fmt.Errorf("invalid post-polish profile: %s", cfg.Profile)
+	}
+}
+
+func runLegacy(ctx context.Context, client JSONCompleter, sourceSegments, translatedSegments []srt.Segment, cfg Config) (Result, error) {
 	if err := validateAligned(sourceSegments, translatedSegments); err != nil {
 		return Result{}, err
 	}
@@ -56,19 +69,25 @@ func Run(ctx context.Context, client JSONCompleter, sourceSegments, translatedSe
 	guardRejected := broad.guardRejected + repair.guardRejected
 	failedRequests := broad.failedRequests + repair.failedRequests
 	artifact := Artifact{
-		Version:             1,
-		PromptVersion:       PromptVersion,
-		SourceLanguage:      cfg.SourceLanguage.Code,
-		TargetLanguage:      cfg.TargetLanguage.Code,
-		BroadChunkSize:      cfg.BroadChunkSize,
-		RepairChunkSize:     cfg.RepairChunkSize,
-		MaxTokens:           cfg.MaxTokens,
-		Accepted:            accepted,
-		Rejected:            rejected,
-		GuardRejected:       guardRejected,
-		FailedRequests:      failedRequests,
-		Usage:               usage,
-		ProtectedRenderings: len(cfg.ProtectedRenderings),
+		Version:                  1,
+		PromptVersion:            PromptVersionLegacy,
+		InstructionPromptVersion: PromptVersionLegacy,
+		ApplicationPromptVersion: PromptVersionLegacy,
+		Profile:                  string(ProfileLegacy),
+		Model:                    cfg.Model,
+		BaseURL:                  cfg.BaseURL,
+		SourceLanguage:           cfg.SourceLanguage.Code,
+		TargetLanguage:           cfg.TargetLanguage.Code,
+		BroadChunkSize:           cfg.BroadChunkSize,
+		RepairChunkSize:          cfg.RepairChunkSize,
+		MaxTokens:                cfg.MaxTokens,
+		Accepted:                 accepted,
+		Rejected:                 rejected,
+		GuardRejected:            guardRejected,
+		FailedRequests:           failedRequests,
+		Usage:                    usage,
+		ProtectedRenderings:      len(cfg.ProtectedRenderings),
+		Stats:                    buildArtifactStats(legacyRequestCount(len(base), cfg.BroadChunkSize, cfg.RepairChunkSize)-failedRequests, failedRequests, accepted, rejected, nil),
 	}
 	logger.Info("Post-polish completed",
 		"event", "post_polish_completed",
@@ -254,6 +273,10 @@ func protectedRenderingLosses(before, after string, protected map[string]string)
 }
 
 func normalizeConfig(cfg Config) Config {
+	profile, ok := NormalizeProfile(string(cfg.Profile))
+	if ok {
+		cfg.Profile = profile
+	}
 	if cfg.BroadChunkSize <= 0 {
 		cfg.BroadChunkSize = DefaultBroadChunkSize
 	}
@@ -261,7 +284,14 @@ func normalizeConfig(cfg Config) Config {
 		cfg.RepairChunkSize = DefaultRepairChunkSize
 	}
 	if cfg.MaxTokens <= 0 {
-		cfg.MaxTokens = DefaultMaxTokens
+		if cfg.Profile == ProfileLegacy {
+			cfg.MaxTokens = DefaultLegacyMaxTokens
+		} else {
+			cfg.MaxTokens = DefaultV2MaxTokens
+		}
+	}
+	if cfg.ChunkSize <= 0 {
+		cfg.ChunkSize = DefaultV2ChunkSize
 	}
 	if cfg.ProtectedRenderings == nil {
 		cfg.ProtectedRenderings = map[string]string{}
@@ -328,6 +358,43 @@ func mapToSortedCorrections(input map[int]Correction) []Correction {
 		return out[i].ID < out[j].ID
 	})
 	return out
+}
+
+func legacyRequestCount(segmentCount, broadSize, repairSize int) int {
+	return chunkCount(segmentCount, broadSize) + chunkCount(segmentCount, repairSize)
+}
+
+func chunkCount(segmentCount, chunkSize int) int {
+	if segmentCount <= 0 || chunkSize <= 0 {
+		return 0
+	}
+	return (segmentCount + chunkSize - 1) / chunkSize
+}
+
+func buildArtifactStats(requestOK, requestError int, accepted []Correction, rejected []RejectedCorrection, appliedRows []AppliedRowRecord) ArtifactStats {
+	stats := ArtifactStats{
+		RequestOK:       requestOK,
+		RequestError:    requestError,
+		ChangedSegments: len(accepted),
+	}
+	for _, row := range appliedRows {
+		if row.ForcedNoChange {
+			stats.ForcedNoChange++
+		}
+	}
+	for _, row := range rejected {
+		switch row.Reason {
+		case "empty_text":
+			stats.EmptyRejected++
+		case "meta_text":
+			stats.MetaRejected++
+		case "protected_rendering_removed":
+			stats.GuardRejected++
+		default:
+			stats.ValidationError++
+		}
+	}
+	return stats
 }
 
 func addUsage(a, b translation.UsageMetadata) translation.UsageMetadata {

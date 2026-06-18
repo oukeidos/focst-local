@@ -264,6 +264,7 @@ func TestRunTranslationPostPolishWorksWithoutGlossaryOrNames(t *testing.T) {
 		TargetLang:                "ko",
 		Overwrite:                 true,
 		PostPolish:                true,
+		PostPolishProfile:         string(postpolish.ProfileLegacy),
 		SavePolishCorrectionsPath: correctionsPath,
 		PolishBroadChunkSize:      30,
 		PolishRepairChunkSize:     100,

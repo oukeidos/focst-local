@@ -1,5 +1,8 @@
 # Changelog
 
+## [0.5.0] - 2026-06-18
+- Added post-polish profiles.
+
 ## [0.4.0] - 2026-06-17
 - Added post-translation polish.
 - Added SRT/VTT text entity normalization.
