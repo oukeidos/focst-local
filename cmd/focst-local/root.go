@@ -61,12 +61,14 @@ func newRootCmd() *cobra.Command {
 		newRepairCmd(),
 		newNamesCmd(),
 		newListCmd(),
+		newScriptsCmd(),
 		newEnvCmd(),
 		newConfigCmd(),
 		newLicensesCmd(),
 		newGlossaryCmd(),
 		newPhraseAnchorsCmd(),
 		newPolishCmd(),
+		newResidueCmd(),
 	)
 
 	cmd.InitDefaultCompletionCmd()

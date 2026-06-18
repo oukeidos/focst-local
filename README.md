@@ -109,16 +109,20 @@ options.
 
 ## Experimental Local Quality Passes
 
-`focst-local` includes three optional local quality passes: glossary generation,
-phrase anchors, and post-translation polish. For practical use, the glossary
-pass is recommended because it often improves name and term consistency. Phrase
-anchors and post-polish are purely experimental: they may occasionally help, but
-current testing does not show reliable quality improvement and they can make
-translations worse.
+`focst-local` includes optional local quality passes: glossary generation,
+source residue repair, phrase anchors, and post-translation polish. For
+practical use, the glossary pass is recommended because it often improves name
+and term consistency. Source residue repair is recommended only in limited
+language-pair situations where untranslated source text is easy to identify by
+script, such as kana left in Korean output. Phrase anchors and post-polish are
+purely experimental: they may occasionally help, but current testing does not
+show reliable quality improvement and they can make translations worse.
 
 Recommended use:
 
 - Start with `--auto-glossary` for important translations.
+- Add `--repair-residue` only when source-script residue is a real problem and
+  the source/target writing systems are clearly separable.
 - Use phrase anchors or post-polish only for experiments, debugging, or manual
   comparison runs.
 - Save and inspect artifacts before trusting output from any experimental pass.
@@ -166,6 +170,51 @@ Known limits:
 - The glossary mainly improves terminology consistency, not general sentence
   translation quality.
 - Explicit `--names` mappings take priority over generated glossary entries.
+
+### Source Residue Repair
+
+`focst-local` can detect translated subtitle rows that still contain copied
+source-script text, then ask the local model to repair only those rows. This is
+a narrow cleanup pass for cases where source and target writing systems are
+mostly separate. It is not a general mistranslation detector.
+
+Use `--repair-residue` with an explicit script list or `auto`:
+
+```bash
+./focst-local translate input.srt output.srt \
+  --source ja \
+  --target ko \
+  --repair-residue \
+  --residue-scripts auto
+```
+
+For manual inspection, split detection and repair:
+
+```bash
+./focst-local residue detect input.vtt translated.srt \
+  --source ja \
+  --target ko \
+  --residue-scripts hiragana,katakana \
+  --save-residue-candidates residue.json \
+  --residue-report residue.md
+
+./focst-local residue repair input.vtt translated.srt repaired.srt \
+  --source ja \
+  --target ko \
+  --residue-candidates residue.json
+```
+
+Use `./focst-local scripts --examples` to see common script names, or
+`./focst-local scripts` for the full Unicode script list supported by the build.
+
+Known limits:
+
+- It works best when source-script leftovers are visually distinct in the
+  target output.
+- Shared scripts such as Latin can produce false positives because acronyms,
+  names, UI terms, or titles may be intentionally preserved.
+- The repair model is asked to fix only detected residue, so it will not correct
+  broader mistranslations or awkward phrasing.
 
 ### Local Phrase Anchors
 

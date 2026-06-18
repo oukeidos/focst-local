@@ -21,6 +21,7 @@ import (
 	"github.com/oukeidos/focst-local/internal/phraseanchor"
 	"github.com/oukeidos/focst-local/internal/postpolish"
 	"github.com/oukeidos/focst-local/internal/recovery"
+	"github.com/oukeidos/focst-local/internal/residue"
 	"github.com/oukeidos/focst-local/internal/srt"
 	"github.com/oukeidos/focst-local/internal/translation"
 	"github.com/oukeidos/focst-local/internal/translator"
@@ -105,6 +106,16 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 	}
 	if cfg.PolishArtifactsDir != "" {
 		if err := files.RejectSymlinkPath(cfg.PolishArtifactsDir); err != nil {
+			return TranslationResult{}, err
+		}
+	}
+	if cfg.SaveResidueCandidatesPath != "" {
+		if err := files.RejectSymlinkPath(cfg.SaveResidueCandidatesPath); err != nil {
+			return TranslationResult{}, err
+		}
+	}
+	if cfg.ResidueReportPath != "" {
+		if err := files.RejectSymlinkPath(cfg.ResidueReportPath); err != nil {
 			return TranslationResult{}, err
 		}
 	}
@@ -435,10 +446,62 @@ func RunTranslation(ctx context.Context, cfg Config) (TranslationResult, error) 
 					logger.Info("Post-polish corrections saved", "event", "post_polish_saved", "path", cfg.SavePolishCorrectionsPath, "accepted", len(polishResult.Accepted), "rejected", len(polishResult.Rejected))
 				}
 			}
+			if cfg.RepairResidue {
+				artifact, err := residue.Detect(segments, outSegments, residue.DetectOptions{
+					SourceLanguage:   srcLang,
+					TargetLanguage:   tgtLang,
+					SourcePath:       cfg.InputPath,
+					TranslatedPath:   effectiveOutputPath,
+					ScriptSpec:       cfg.ResidueScripts,
+					NoPreprocess:     true,
+					NoLangPreprocess: true,
+				})
+				if err != nil {
+					return result, fmt.Errorf("residue detection failed: %w", err)
+				}
+				if cfg.SaveResidueCandidatesPath != "" {
+					if err := residue.SaveArtifact(cfg.SaveResidueCandidatesPath, artifact); err != nil {
+						return result, err
+					}
+				}
+				var repairRecords []residue.RepairRecord
+				if len(artifact.Candidates) > 0 {
+					repairResult, err := residue.Repair(ctx, client, segments, outSegments, artifact, residue.RepairOptions{
+						SourceLanguage:      srcLang,
+						TargetLanguage:      tgtLang,
+						Model:               cfg.Model,
+						BaseURL:             cfg.BaseURL,
+						MaxTokens:           residue.DefaultRepairMaxTokens,
+						ProtectedRenderings: finalMapping,
+					})
+					if err != nil {
+						return result, fmt.Errorf("residue repair failed: %w", err)
+					}
+					result.Usage = addUsage(result.Usage, repairResult.Usage)
+					outSegments = repairResult.Segments
+					repairRecords = repairResult.Records
+				}
+				if cfg.ResidueReportPath != "" {
+					if err := residue.SaveMarkdownReport(cfg.ResidueReportPath, artifact, repairRecords); err != nil {
+						return result, err
+					}
+				}
+				logger.Info("Residue repair completed",
+					"event", "residue_repair_completed",
+					"scripts", strings.Join(artifact.Config.SelectedScripts, ","),
+					"candidates", len(artifact.Candidates),
+					"records", len(repairRecords),
+					"candidate_path", cfg.SaveResidueCandidatesPath,
+					"report_path", cfg.ResidueReportPath,
+				)
+			}
 		} else {
 			logger.Info("Skipping post-processing for partial output")
 			if cfg.PostPolish {
 				logger.Info("Skipping post-polish for partial output", "event", "post_polish_skipped", "reason", "partial_output")
+			}
+			if cfg.RepairResidue {
+				logger.Info("Skipping residue repair for partial output", "event", "residue_repair_skipped", "reason", "partial_output")
 			}
 		}
 

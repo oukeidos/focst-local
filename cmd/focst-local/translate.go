@@ -62,6 +62,10 @@ type translateOptions struct {
 	polishMaxChunkSize                   int
 	noPolishSentenceAwareChunks          bool
 	polishChunkBoundaryPlanner           string
+	repairResidue                        bool
+	residueScripts                       string
+	saveResidueCandidatesPath            string
+	residueReportPath                    string
 	noPreprocess                         bool
 	noPostprocess                        bool
 	noLangPreprocess                     bool
@@ -134,6 +138,10 @@ func addTranslateFlags(cmd *cobra.Command, opts *translateOptions) {
 	cmd.Flags().IntVar(&opts.polishMaxChunkSize, "polish-max-chunk-size", postpolish.DefaultV2MaxChunkSize, "Maximum chunk size for v2 sentence-aware post-polish planning")
 	cmd.Flags().BoolVar(&opts.noPolishSentenceAwareChunks, "no-polish-sentence-aware-chunks", false, "Use fixed-size chunks for v2 post-polish profiles")
 	cmd.Flags().StringVar(&opts.polishChunkBoundaryPlanner, "polish-chunk-boundary-planner", pipeline.ChunkBoundaryPlannerLocalLLM, "Post-polish boundary planner: local-llm, deterministic, or off")
+	cmd.Flags().BoolVar(&opts.repairResidue, "repair-residue", false, "Detect and repair selected source-script residue after translation")
+	cmd.Flags().StringVar(&opts.residueScripts, "residue-scripts", "", "Unicode scripts to scan for source residue, comma-separated, or auto")
+	cmd.Flags().StringVar(&opts.saveResidueCandidatesPath, "save-residue-candidates", "", "Path to save detected residue candidates JSON")
+	cmd.Flags().StringVar(&opts.residueReportPath, "residue-report", "", "Path to save a residue repair Markdown report")
 	cmd.Flags().BoolVar(&opts.noPreprocess, "no-preprocess", false, "Disable all preprocessing (bracket removal, symbol filtering)")
 	cmd.Flags().BoolVar(&opts.noLangPreprocess, "no-lang-preprocess", false, "Disable language-specific preprocessing only")
 	cmd.Flags().BoolVar(&opts.noPostprocess, "no-postprocess", false, "Disable all post-processing (punctuation, timing correction)")
@@ -245,6 +253,10 @@ func runTranslate(cmd *cobra.Command, args []string, opts *translateOptions) err
 		PolishMaxChunkSize:                   opts.polishMaxChunkSize,
 		PolishSentenceAwareChunks:            !opts.noPolishSentenceAwareChunks && opts.polishChunkBoundaryPlanner != pipeline.ChunkBoundaryPlannerOff,
 		PolishChunkBoundaryPlanner:           opts.polishChunkBoundaryPlanner,
+		RepairResidue:                        opts.repairResidue,
+		ResidueScripts:                       opts.residueScripts,
+		SaveResidueCandidatesPath:            opts.saveResidueCandidatesPath,
+		ResidueReportPath:                    opts.residueReportPath,
 		OnProgress: func(p translator.TranslationProgress) {
 			switch p.State {
 			case translator.StateCompleted:

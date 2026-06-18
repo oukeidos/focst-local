@@ -2,6 +2,7 @@
 
 ## [0.5.0] - 2026-06-18
 - Added post-polish profiles.
+- Added source residue detection and repair.
 
 ## [0.4.0] - 2026-06-17
 - Added post-translation polish.

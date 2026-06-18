@@ -94,6 +94,14 @@ type Config struct {
 	PolishSentenceAwareChunks  bool
 	PolishChunkBoundaryPlanner string
 
+	// Optional source residue repair. This is a narrow cleanup pass that
+	// detects selected source-script residue in the translated output and asks
+	// the local model to repair only those rows.
+	RepairResidue             bool
+	ResidueScripts            string
+	SaveResidueCandidatesPath string
+	ResidueReportPath         string
+
 	// Callbacks
 	// OnProgress is called with translation progress updates.
 	OnProgress func(translator.TranslationProgress)
@@ -284,6 +292,15 @@ func (c Config) Validate() error {
 	}
 	if c.SavePolishCorrectionsPath != "" && !c.PostPolish {
 		return fmt.Errorf("--save-polish-corrections requires --post-polish")
+	}
+	if c.RepairResidue && c.ResidueScripts == "" {
+		return fmt.Errorf("--repair-residue requires --residue-scripts")
+	}
+	if c.SaveResidueCandidatesPath != "" && !c.RepairResidue {
+		return fmt.Errorf("--save-residue-candidates requires --repair-residue")
+	}
+	if c.ResidueReportPath != "" && !c.RepairResidue {
+		return fmt.Errorf("--residue-report requires --repair-residue")
 	}
 	if _, ok := postpolish.NormalizeProfile(c.PostPolishProfile); !ok {
 		return fmt.Errorf("invalid post-polish profile: %s", c.PostPolishProfile)

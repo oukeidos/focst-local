@@ -271,3 +271,62 @@ func TestPostPolishFlags_RejectSaveWithoutPostPolish(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestResidueFlags_Parse(t *testing.T) {
+	cases := [][]string{
+		{"--repair-residue", "--residue-scripts", "hiragana,katakana"},
+		{"--repair-residue", "--residue-scripts", "auto"},
+		{"--repair-residue", "--save-residue-candidates", "residue.json"},
+		{"--repair-residue", "--residue-report", "residue.md"},
+		{"translate", "--repair-residue", "--residue-scripts", "hiragana"},
+		{"residue", "detect", "--residue-scripts", "hiragana"},
+		{"residue", "detect", "--save-residue-candidates", "residue.json"},
+		{"residue", "detect", "--residue-report", "residue.md"},
+		{"residue", "repair", "--residue-scripts", "hiragana"},
+		{"residue", "repair", "--residue-candidates", "residue.json"},
+		{"residue", "repair", "--max-tokens", "1024"},
+		{"residue", "repair", "--glossary-file", "glossary.json"},
+		{"residue", "repair", "--names", "names.json"},
+	}
+	for _, args := range cases {
+		t.Run(strings.Join(args, "_"), func(t *testing.T) {
+			out, err := executeCommand(t, args...)
+			if err == nil {
+				t.Fatalf("expected command error from missing required args, got nil")
+			}
+			if strings.Contains(out, "unknown flag") {
+				t.Fatalf("expected residue flag to parse, got output: %s", out)
+			}
+		})
+	}
+}
+
+func TestResidueFlags_RejectSaveWithoutRepairResidue(t *testing.T) {
+	_, err := executeCommand(t,
+		"translate",
+		"input.srt",
+		"output.srt",
+		"--save-residue-candidates", "residue.json",
+	)
+	if err == nil {
+		t.Fatalf("expected save-residue-candidates dependency error")
+	}
+	if !strings.Contains(err.Error(), "--save-residue-candidates requires --repair-residue") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestResidueFlags_RejectRepairWithoutScripts(t *testing.T) {
+	_, err := executeCommand(t,
+		"translate",
+		"input.srt",
+		"output.srt",
+		"--repair-residue",
+	)
+	if err == nil {
+		t.Fatalf("expected repair-residue dependency error")
+	}
+	if !strings.Contains(err.Error(), "--repair-residue requires --residue-scripts") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
